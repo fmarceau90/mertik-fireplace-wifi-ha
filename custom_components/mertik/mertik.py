@@ -180,25 +180,70 @@ class Mertik:
         return self.__hex2bin(hex)[index : index + 1] == "1"
 
     def __sendCommand(self, msg):
-        try:
-            self.client.send(bytearray.fromhex(send_command_prefix + msg))
-        except socket.error:
-            self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.client.connect((self.ip, 2000))
-            self.client.send(bytearray.fromhex(send_command_prefix + msg))
+        MAX_RETRIES = 3
+        PORT = 2000 
+        
+        # Ensure input is string before hex encoding (sanity check)
+        if not isinstance(msg, str):
+            msg = str(msg)
 
-        data = self.client.recv(1024)
-        if len(data) == 0:
-            self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.client.connect((self.ip, 2000))
-            self.client.send(bytearray.fromhex(send_command_prefix + msg))
-            data = self.client.recv(1024)
+        # Prepare the binary payload
+        # Note: You need to make sure send_command_prefix is defined in your class or passed in
+        # Assuming send_command_prefix is a class attribute or global variable
+        payload = bytearray.fromhex(send_command_prefix + msg)
 
-        tempData = str(data, "ascii")
-        tempData = tempData[1:]
-        tempData = re.sub("/\r/g", ";", tempData)
-        if tempData.startswith(process_status_prefixes):
-            self.__processStatus(tempData)
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                # If we don't have a socket, or it's closed, create one
+                if self.client is None:
+                    self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    self.client.settimeout(2.0) # 2 second timeout prevents HA freezing too long
+                    self.client.connect((self.ip, PORT))
+
+                self.client.send(payload)
+                
+                # Wait for response
+                data = self.client.recv(1024)
+
+                # If we got no data, the connection might be dead. 
+                # Raise error to trigger the except block (reconnect)
+                if not data:
+                    raise socket.error("Empty response received")
+
+                # --- SUCCESS: PROCESS DATA ---
+                # Decode to ASCII
+                tempData = str(data, "ascii")
+                
+                # Fix: Remove the first character (usually a checksum/marker)
+                if len(tempData) > 0:
+                    tempData = tempData[1:]
+                
+                # Fix: Python replace instead of JS regex
+                # This replaces Carriage Returns with Semicolons
+                tempData = tempData.replace('\r', ';')
+
+                if tempData.startswith(process_status_prefixes):
+                    self.__processStatus(tempData)
+                
+                # We succeeded, so break the retry loop
+                return
+
+            except (socket.error, socket.timeout, OSError) as e:
+                # Log the retry if you want (optional)
+                print(f"Attempt {attempt} failed: {e}")
+                
+                # Force a close so we get a fresh connection next loop
+                if self.client:
+                    try:
+                        self.client.close()
+                    except:
+                        pass
+                    self.client = None
+                
+                # If this was the last attempt, maybe log an error or give up
+                if attempt == MAX_RETRIES:
+                    _LOGGER.error("Mertik fireplace not responding")
+                    pass
 
     def __processStatus(self, statusStr):
         tempSub = statusStr[14:16]
