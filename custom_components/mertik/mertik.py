@@ -153,6 +153,7 @@ class Mertik:
 
     def set_flame_height(self, flame_height) -> None:
         steps = [
+            "3030",
             "3830",
             "3842",
             "3937",
@@ -166,7 +167,7 @@ class Mertik:
             "4633",
             "4646",
         ]
-        l = steps[flame_height - 1]
+        l = steps[flame_height]
         msg = "3136" + l + "03"
 
         self.__sendCommand(msg)

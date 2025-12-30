@@ -26,7 +26,7 @@ class MertikFlameHeightEntity(CoordinatorEntity, NumberEntity):
         super().__init__(dataservice)
         self._dataservice = dataservice
         self._attr_name = name + " Flame Height"
-        self._attr_native_min_value = 1
+        self._attr_native_min_value = 0
         self._attr_native_max_value = 12
         self._attr_unique_id = entry_id + "-FlameHeight"
 
