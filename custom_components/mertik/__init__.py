@@ -8,7 +8,7 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # Load all platforms at once
-PLATFORMS = ["switch", "number", "light", "sensor"]
+PLATFORMS = ["switch", "number", "light", "sensor", "climate"]
 
 async def async_setup_entry(
     hass: core.HomeAssistant, entry: config_entries.ConfigEntry

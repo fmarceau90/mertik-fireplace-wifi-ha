@@ -247,8 +247,14 @@ class Mertik:
             if self._light_brightness < 0 or not self._light_on:
                 self._light_brightness = 0
 
-            # 5. Parse Temp
-            self._ambient_temperature = int("0x" + statusStr[30:32], 0) / 10
+            # 5. Parse Temp (With Sanity Check)
+            raw_temp = int("0x" + statusStr[30:32], 0) / 10
+            
+            # Only update if the temp is "sane" (e.g., between 1C and 50C)
+            # This filters out the "0.0" sleep glitches.
+            if 1.0 < raw_temp < 50.0:
+                self._ambient_temperature = raw_temp
+            # If it's 0.0, we just keep the previous self._ambient_temperature value
             
         except Exception as e:
             _LOGGER.error(f"Error parsing status: {e}")

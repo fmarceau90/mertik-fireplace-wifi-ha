@@ -6,20 +6,21 @@ async def async_setup_entry(hass, entry, async_add_entities):
     dataservice = hass.data[DOMAIN].get(entry.entry_id)
     entities = []
     
-    # Main Fireplace Switch
     entities.append(
         MertikOnOffSwitchEntity(hass, dataservice, entry.entry_id, entry.data["name"])
     )
-    
-    # Aux / Light Switch (Secondary)
-    entities.append(
+        entities.append(
         MertikAuxOnOffSwitchEntity(
             hass, dataservice, entry.entry_id, entry.data["name"] + " Aux"
         )
     )
-    
+    entities.append(
+        MertikEcoSwitchEntity(
+            hass, dataservice, entry.entry_id, entry.data["name"] + " Eco Mode"
+        )
+    )
+
     async_add_entities(entities)
-    # NOTE: No more daisy-chain loading here!
 
 class MertikOnOffSwitchEntity(CoordinatorEntity, SwitchEntity):
     def __init__(self, hass, dataservice, entry_id, name):
@@ -64,3 +65,27 @@ class MertikAuxOnOffSwitchEntity(CoordinatorEntity, SwitchEntity):
     @property
     def icon(self) -> str:
         return "mdi:light"
+
+class MertikEcoSwitchEntity(CoordinatorEntity, SwitchEntity):
+    """Switch to toggle Eco Wave mode."""
+    def __init__(self, hass, dataservice, entry_id, name):
+        super().__init__(dataservice)
+        self._dataservice = dataservice
+        self._attr_name = name
+        self._attr_unique_id = entry_id + "-EcoMode"
+        self._attr_icon = "mdi:leaf" # Nice leaf icon
+
+    @property
+    def is_on(self):
+        # '2' usually indicates Eco Mode in the Mertik protocol
+        return self._dataservice.operating_mode == "2"
+
+    async def async_turn_on(self, **kwargs):
+        """Turn Eco Mode on."""
+        await self._dataservice.mertik.async_set_eco()
+        await self._dataservice.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs):
+        """Turn Eco Mode off (Return to Manual)."""
+        await self._dataservice.mertik.async_set_manual()
+        await self._dataservice.async_request_refresh()
