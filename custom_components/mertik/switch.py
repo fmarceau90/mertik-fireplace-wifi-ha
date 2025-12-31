@@ -9,7 +9,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     entities.append(
         MertikOnOffSwitchEntity(hass, dataservice, entry.entry_id, entry.data["name"])
     )
-        entities.append(
+    entities.append(
         MertikAuxOnOffSwitchEntity(
             hass, dataservice, entry.entry_id, entry.data["name"] + " Aux"
         )
