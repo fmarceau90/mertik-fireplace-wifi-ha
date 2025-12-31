@@ -5,15 +5,20 @@ from .const import DOMAIN
 async def async_setup_entry(hass, entry, async_add_entities):
     dataservice = hass.data[DOMAIN].get(entry.entry_id)
     entities = []
-    
+
+    # 1. Main Switch
     entities.append(
         MertikOnOffSwitchEntity(hass, dataservice, entry.entry_id, entry.data["name"])
     )
+
+    # 2. Aux Switch
     entities.append(
         MertikAuxOnOffSwitchEntity(
             hass, dataservice, entry.entry_id, entry.data["name"] + " Aux"
         )
     )
+
+    # 3. Eco Mode Switch
     entities.append(
         MertikEcoSwitchEntity(
             hass, dataservice, entry.entry_id, entry.data["name"] + " Eco Mode"
@@ -21,6 +26,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     )
 
     async_add_entities(entities)
+
 
 class MertikOnOffSwitchEntity(CoordinatorEntity, SwitchEntity):
     def __init__(self, hass, dataservice, entry_id, name):
@@ -66,6 +72,7 @@ class MertikAuxOnOffSwitchEntity(CoordinatorEntity, SwitchEntity):
     def icon(self) -> str:
         return "mdi:light"
 
+
 class MertikEcoSwitchEntity(CoordinatorEntity, SwitchEntity):
     """Switch to toggle Eco Wave mode."""
     def __init__(self, hass, dataservice, entry_id, name):
@@ -73,7 +80,7 @@ class MertikEcoSwitchEntity(CoordinatorEntity, SwitchEntity):
         self._dataservice = dataservice
         self._attr_name = name
         self._attr_unique_id = entry_id + "-EcoMode"
-        self._attr_icon = "mdi:leaf" # Nice leaf icon
+        self._attr_icon = "mdi:leaf"
 
     @property
     def is_on(self):
