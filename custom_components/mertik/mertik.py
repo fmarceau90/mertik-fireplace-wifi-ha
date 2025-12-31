@@ -1,6 +1,6 @@
 import logging
 import asyncio
-import socket # Needed for the static get_devices method if you use it
+import socket 
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -9,7 +9,7 @@ class Mertik:
         self.ip = ip
         self.port = port
         
-        # Initialize all state variables from your original code
+        # Initialize state variables
         self.on = False
         self.mode = None 
         self.flameHeight = 0
@@ -21,7 +21,7 @@ class Mertik:
         self._light_brightness = 0
         self._ambient_temperature = 0.0
 
-    # --- Properties (Restored ALL of them) ---
+    # --- Properties ---
     @property
     def is_on(self) -> bool:
         return self.on
@@ -57,35 +57,31 @@ class Mertik:
     def get_flame_height(self) -> int:
         return self.flameHeight
 
-    # --- Discovery (Restored from your file) ---
+    # --- Discovery ---
     @staticmethod
     def get_devices():
-        # Kept synchronous as it is a standalone UDP broadcast
-        # You likely don't call this in the main loop, so it's safe.
         UDP_PORT = 30719
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind(("", UDP_PORT))
-        
-        # Send broadcast
-        MESSAGE = "000100f6"
-        hexstring = bytearray.fromhex(MESSAGE)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        sock.sendto(hexstring, ("<broadcast>", 30718))
-
-        # Receive reply
-        sock.settimeout(3.0)
         try:
+            sock.bind(("", UDP_PORT))
+            
+            # Send broadcast
+            MESSAGE = "000100f6"
+            hexstring = bytearray.fromhex(MESSAGE)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.sendto(hexstring, ("<broadcast>", 30718))
+
+            # Receive reply
+            sock.settimeout(3.0)
             data, addr = sock.recvfrom(1024)
-            # You might need a helper for getmacbyip if it was external, 
-            # but here is the raw logic.
             device = {"address": addr}
             return device
-        except socket.timeout:
+        except (socket.timeout, OSError):
             return {}
         finally:
             sock.close()
 
-    # --- Async Actions (Restored ALL methods) ---
+    # --- Async Actions ---
     async def async_standBy(self):
         await self._async_send_command("3136303003")
 
@@ -112,17 +108,14 @@ class Mertik:
         await self._async_send_command("3330303003")
         
     async def async_set_eco(self):
-        # Restored!
         msg = "4233303103"
         await self._async_send_command(msg)
 
     async def async_set_manual(self):
-        # Restored!
         msg = "423003"
         await self._async_send_command(msg)
 
     async def async_set_light_brightness(self, brightness) -> None:
-        # Your original math
         normalized_brightness = (brightness - 1) / 254 * 100
 
         if normalized_brightness == 100:
@@ -153,10 +146,10 @@ class Mertik:
             await self.async_refresh_status()
 
     # --- Core Communication ---
-async def _async_send_command(self, msg):
+    async def _async_send_command(self, msg):
         """Async command sender with Retry Logic."""
         MAX_RETRIES = 3
-        RETRY_DELAY = 2.0  # Increased delay between retries
+        RETRY_DELAY = 2.0  # Increased delay
         
         if not isinstance(msg, str):
             msg = str(msg)
@@ -165,12 +158,12 @@ async def _async_send_command(self, msg):
         full_payload = bytearray.fromhex(send_command_prefix + msg)
         process_status_prefixes = ("303030300003", "030300000003")
 
-        last_error = None  # To store the reason for failure
+        last_error = None
 
         for attempt in range(1, MAX_RETRIES + 1):
             writer = None
             try:
-                # 1. Connect (Increased timeout to 10s)
+                # 1. Connect (10s Timeout)
                 future = asyncio.open_connection(self.ip, self.port)
                 reader, writer = await asyncio.wait_for(future, timeout=10.0)
                 
@@ -178,16 +171,17 @@ async def _async_send_command(self, msg):
                 writer.write(full_payload)
                 await writer.drain()
 
-                # 3. Read (Increased timeout to 10s)
+                # 3. Read (10s Timeout)
                 data = await asyncio.wait_for(reader.read(1024), timeout=10.0)
 
                 if not data:
                     raise ConnectionError("Empty response")
 
-                # 4. Process
+                # 4. Process Data
                 temp_data = data.decode("ascii", errors='ignore')
                 if len(temp_data) > 0:
                     temp_data = temp_data[1:]
+                
                 temp_data = temp_data.replace('\r', ';')
 
                 if temp_data.startswith(process_status_prefixes):
@@ -199,18 +193,16 @@ async def _async_send_command(self, msg):
                 last_error = e
                 _LOGGER.warning(f"Attempt {attempt}/{MAX_RETRIES} failed: {e}")
                 
-                # Force close before retrying
                 if writer:
                     try:
                         writer.close()
                         await writer.wait_closed()
                     except Exception:
                         pass
-                        
+
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(RETRY_DELAY)
                 else:
-                    # LOG THE ACTUAL ERROR HERE
                     _LOGGER.error(f"Mertik unreachable at {self.ip} - Last Error: {last_error}")
 
             finally:
@@ -222,7 +214,7 @@ async def _async_send_command(self, msg):
                         pass
 
     def _process_status(self, statusStr):
-        """Parses the raw status string (Ported from your original code)."""
+        """Parses the raw status string."""
         try:
             # 1. Parse Flame Height
             tempSub = statusStr[14:16]
@@ -236,7 +228,7 @@ async def _async_send_command(self, msg):
                 self.flameHeight = round(((flameHeightRaw - 128) / 128) * 12) + 1
                 self.on = True
 
-            # 2. Parse Mode (Restored)
+            # 2. Parse Mode
             self.mode = statusStr[24:25]
 
             # 3. Parse Bits
