@@ -149,13 +149,14 @@ class Mertik:
     async def _async_send_command(self, msg):
         """Async command sender with Retry Logic."""
         MAX_RETRIES = 3
-        RETRY_DELAY = 2.0  # Increased delay
+        RETRY_DELAY = 2.0
         
         if not isinstance(msg, str):
             msg = str(msg)
             
-        send_command_prefix = "03"
+        send_command_prefix = "0233303330333033303830"
         full_payload = bytearray.fromhex(send_command_prefix + msg)
+        
         process_status_prefixes = ("303030300003", "030300000003")
 
         last_error = None
