@@ -153,58 +153,66 @@ class Mertik:
             await self.async_refresh_status()
 
     # --- Core Communication ---
-    async def _async_send_command(self, msg):
+async def _async_send_command(self, msg):
         """Async command sender with Retry Logic."""
         MAX_RETRIES = 3
-        RETRY_DELAY = 1.0
-        PORT = 2000
+        RETRY_DELAY = 2.0  # Increased delay between retries
         
         if not isinstance(msg, str):
             msg = str(msg)
             
-        # Based on your strings.json/original code
         send_command_prefix = "03"
         full_payload = bytearray.fromhex(send_command_prefix + msg)
-
         process_status_prefixes = ("303030300003", "030300000003")
+
+        last_error = None  # To store the reason for failure
 
         for attempt in range(1, MAX_RETRIES + 1):
             writer = None
             try:
-                # 1. Connect (5s Timeout)
+                # 1. Connect (Increased timeout to 10s)
                 future = asyncio.open_connection(self.ip, self.port)
-                reader, writer = await asyncio.wait_for(future, timeout=5.0)
+                reader, writer = await asyncio.wait_for(future, timeout=10.0)
                 
                 # 2. Send
                 writer.write(full_payload)
                 await writer.drain()
 
-                # 3. Read (5s Timeout)
-                data = await asyncio.wait_for(reader.read(1024), timeout=5.0)
+                # 3. Read (Increased timeout to 10s)
+                data = await asyncio.wait_for(reader.read(1024), timeout=10.0)
 
                 if not data:
                     raise ConnectionError("Empty response")
 
-                # 4. Process Data
+                # 4. Process
                 temp_data = data.decode("ascii", errors='ignore')
                 if len(temp_data) > 0:
                     temp_data = temp_data[1:]
-                
-                # Fix line endings
                 temp_data = temp_data.replace('\r', ';')
 
-                # Check if it is a status response
                 if temp_data.startswith(process_status_prefixes):
                     self._process_status(temp_data)
                 
                 return # Success
 
             except (OSError, asyncio.TimeoutError, ConnectionError) as e:
-                _LOGGER.debug(f"Attempt {attempt} failed: {e}")
+                last_error = e
+                _LOGGER.warning(f"Attempt {attempt}/{MAX_RETRIES} failed: {e}")
+                
+                # Force close before retrying
+                if writer:
+                    try:
+                        writer.close()
+                        await writer.wait_closed()
+                    except Exception:
+                        pass
+                        
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(RETRY_DELAY)
                 else:
-                    _LOGGER.error(f"Mertik unreachable at {self.ip}")
+                    # LOG THE ACTUAL ERROR HERE
+                    _LOGGER.error(f"Mertik unreachable at {self.ip} - Last Error: {last_error}")
+
             finally:
                 if writer:
                     try:
