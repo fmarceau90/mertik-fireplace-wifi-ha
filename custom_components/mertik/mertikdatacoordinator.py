@@ -115,7 +115,6 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         await self.mertik.async_set_flame_height(flame_height)
         
         # 3. DO NOT REFRESH. 
-        # The motor is moving. We let it finish in peace.
 
     # --- GENTLE MODE COMMANDS (With Optimistic Updates) ---
     
@@ -124,7 +123,9 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         self.async_update_listeners()
         await self.mertik.async_aux_on()
 
-    async def async_aux_off(self.mertik._aux_on = False):
+    async def async_aux_off(self):
+        # FIXED: Removed the accidental code from inside the parentheses
+        self.mertik._aux_on = False
         self.async_update_listeners()
         await self.mertik.async_aux_off()
 
