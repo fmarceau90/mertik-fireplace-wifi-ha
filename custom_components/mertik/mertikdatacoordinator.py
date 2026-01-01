@@ -96,32 +96,42 @@ class MertikDataCoordinator(DataUpdateCoordinator):
                 _LOGGER.info("Fire is at PILOT/OFF. Shutting down.")
                 await self.mertik.async_guard_flame_off()
         
-        await self.async_request_refresh()
+        # REMOVED: await self.async_request_refresh()
+        # We rely on specific handlers or the next poll loop to update state.
+        # This prevents reading "Ghost Data" during the shutdown reset.
 
     async def async_ignite_fireplace(self):
         await self.mertik.async_ignite_fireplace()
 
     async def async_guard_flame_off(self):
+        # 1. Send Hardware Command
         await self.mertik.async_guard_flame_off()
-        self.keep_pilot_on = False 
+        
+        # 2. Force Local State (Master Kill)
+        # The hardware cuts power to Light/Aux on shutdown, so we mirror that.
+        self.keep_pilot_on = False
+        self.mertik.on = False
+        self.mertik._light_on = False
+        self.mertik._aux_on = False
+        self.mertik.flameHeight = 0
+        
+        # 3. Update UI Immediately
+        self.async_update_listeners()
 
     async def async_set_flame_height(self, flame_height) -> None:
         # 1. LOGIC CHECK: If going to Pilot (0), Aux MUST be Off.
         if flame_height == 0 and self.mertik.is_aux_on:
             _LOGGER.info("Flame set to 0 (Pilot). Auto-turning OFF Secondary Burner.")
-            self.mertik._aux_on = False # Optimistic update for Aux
-            await self.mertik.async_aux_off() # Send command
-            # Small pause to let the Aux valve close before moving the Main valve
+            self.mertik._aux_on = False 
+            await self.mertik.async_aux_off() 
             await asyncio.sleep(0.5)
 
-        # 2. OPTIMISTIC UPDATE: Update UI immediately
+        # 2. OPTIMISTIC UPDATE
         self.mertik.flameHeight = flame_height
         self.async_update_listeners()
         
-        # 3. SEND COMMAND: Move the motor
+        # 3. SEND COMMAND
         await self.mertik.async_set_flame_height(flame_height)
-        
-        # 4. DO NOT REFRESH. 
 
     # --- GENTLE MODE COMMANDS (With Optimistic Updates) ---
     

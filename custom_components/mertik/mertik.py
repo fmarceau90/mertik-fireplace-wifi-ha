@@ -134,8 +134,7 @@ class Mertik:
             l = steps[flame_height]
             msg = "3136" + l + "03"
             await self._async_send_command(msg)
-            # OPTIMIZATION: Removed immediate status refresh.
-            # We trust the Optimized Coordinator to handle the UI.
+            # No Status Refresh here (Optimization)
 
     # --- Core Communication ---
     async def _async_send_command(self, msg):
@@ -180,14 +179,11 @@ class Mertik:
                             except Exception: pass
                         
                         if attempt < MAX_RETRIES:
-                            # Exponential Backoff
                             sleep_time = RETRY_DELAY * attempt
                             await asyncio.sleep(sleep_time)
                         else:
                             _LOGGER.error(f"Unreachable: {repr(last_error)}")
             finally:
-                # OPTIMIZATION: Reduced from 1.0s to 0.25s
-                # Just enough to prevent packet collision, but fast enough to feel instant.
                 await asyncio.sleep(0.25) 
 
     def _process_status(self, statusStr):
@@ -209,8 +205,17 @@ class Mertik:
             self._shutting_down = self._from_bit_status(statusBits, 7)
             self._guard_flame_on = self._from_bit_status(statusBits, 8) 
             self._igniting = self._from_bit_status(statusBits, 11)
-            self._aux_on = self._from_bit_status(statusBits, 12)
+            # RAW AUX STATUS
+            raw_aux_on = self._from_bit_status(statusBits, 12)
             self._light_on = self._from_bit_status(statusBits, 13)
+
+            # --- GHOSTBUSTER LOGIC ---
+            # If flame is 0 (Pilot/Standby), we enforce Aux = OFF.
+            # This filters out garbage data during shutdowns.
+            if self.flameHeight == 0:
+                self._aux_on = False
+            else:
+                self._aux_on = raw_aux_on
 
             # 4. Light
             self._light_brightness = round(((int("0x" + statusStr[20:22], 0) - 100) / 151) * 255)
