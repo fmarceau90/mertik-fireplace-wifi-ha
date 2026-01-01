@@ -20,6 +20,11 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         self.entry_id = entry_id
         self.device_name = device_name
         self.keep_pilot_on = False 
+        
+        # NEW: The "Lock" Flag
+        # True = Thermostat is running (Manual Slider Disabled)
+        # False = Thermostat is OFF (Manual Slider Enabled)
+        self.is_thermostat_active = False
 
     @property
     def device_info(self):
@@ -96,30 +101,25 @@ class MertikDataCoordinator(DataUpdateCoordinator):
                 _LOGGER.info("Fire is at PILOT/OFF. Shutting down.")
                 await self.mertik.async_guard_flame_off()
         
-        # REMOVED: await self.async_request_refresh()
-        # We rely on specific handlers or the next poll loop to update state.
-        # This prevents reading "Ghost Data" during the shutdown reset.
-
     async def async_ignite_fireplace(self):
         await self.mertik.async_ignite_fireplace()
 
     async def async_guard_flame_off(self):
-        # 1. Send Hardware Command
+        # 1. Hardware Kill
         await self.mertik.async_guard_flame_off()
         
-        # 2. Force Local State (Master Kill)
-        # The hardware cuts power to Light/Aux on shutdown, so we mirror that.
+        # 2. Local State Reset (Master Kill)
         self.keep_pilot_on = False
         self.mertik.on = False
         self.mertik._light_on = False
         self.mertik._aux_on = False
         self.mertik.flameHeight = 0
         
-        # 3. Update UI Immediately
+        # 3. UI Update
         self.async_update_listeners()
 
     async def async_set_flame_height(self, flame_height) -> None:
-        # 1. LOGIC CHECK: If going to Pilot (0), Aux MUST be Off.
+        # 1. LOGIC: If Pilot (0), force Aux OFF.
         if flame_height == 0 and self.mertik.is_aux_on:
             _LOGGER.info("Flame set to 0 (Pilot). Auto-turning OFF Secondary Burner.")
             self.mertik._aux_on = False 
