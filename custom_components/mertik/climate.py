@@ -19,7 +19,6 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice)
         self._dataservice = dataservice
-        # FRIENDLY NAME: "Thermostat"
         self._attr_name = name + " Thermostat"
         self._attr_unique_id = entry_id + "-Climate"
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
@@ -28,7 +27,7 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         
         self._target_temp = 21.0
         self._attr_hvac_mode = HVACMode.OFF 
-        self._hysteresis = 0.5
+        self._hysteresis = 0.5 
 
     @property
     def device_info(self):
@@ -76,7 +75,6 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         if ATTR_TEMPERATURE in kwargs:
             self._target_temp = kwargs[ATTR_TEMPERATURE]
             
-            # Auto-On Logic
             if self._attr_hvac_mode == HVACMode.OFF:
                 if self._target_temp > (self.current_temperature + self._hysteresis):
                     self._attr_hvac_mode = HVACMode.HEAT
@@ -100,20 +98,30 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         if self._attr_hvac_mode == HVACMode.HEAT:
             delta = self._target_temp - current_temp
             
+            # 1. SHUTDOWN (Too Hot)
             if delta <= -0.5:
+                # Only turn off if we are actually burning
                 if self._dataservice.is_on and self._dataservice.get_flame_height() > 0:
                     if self._dataservice.keep_pilot_on:
                         await self._dataservice.async_set_flame_height(0)
                     else:
                         await self._dataservice.async_guard_flame_off()
             
+            # 2. HEATING (Too Cold)
             elif delta > 0:
                 if not self._dataservice.is_on:
                     await self._dataservice.async_ignite_fireplace()
                     return 
                 
+                # Proportional Calculation
                 target_height = int(delta * 6)
+                
+                # CLAMPING LOGIC
                 if target_height > 12: target_height = 12
+                
+                # CRITICAL FIX: The Floor.
+                # If delta is positive (we need heat), we MUST be at least at level 1.
+                # Level 0 is Pilot (No Heat), which creates the loop you saw.
                 if target_height < 1: target_height = 1 
                 
                 current_height = self._dataservice.get_flame_height()
