@@ -31,7 +31,6 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
         self._attr_hvac_mode = HVACMode.OFF 
         
         # HYSTERESIS SETTINGS
-        # The "Swing": How far temp must drop before we start heating again.
         self._hysteresis_start = 0.5 
 
     @property
@@ -107,7 +106,6 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
             self._target_temp = kwargs[ATTR_TEMPERATURE]
             
             if self._attr_hvac_mode == HVACMode.OFF:
-                # Auto-On if we crank the heat up significantly
                 if self._target_temp > (self.current_temperature + self._hysteresis_start):
                     self._attr_hvac_mode = HVACMode.HEAT
                     self._update_lock_status()
@@ -127,56 +125,36 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
             return 
 
         current_temp = self.current_temperature
-        
-        # Calculate Delta (Target - Current)
-        # Positive = Too Cold (Need Heat)
-        # Negative/Zero = Target Reached
         delta = self._target_temp - current_temp
         
         if self._attr_hvac_mode == HVACMode.HEAT:
             
-            # 1. TARGET REACHED (The Ceiling)
-            # If we hit the target (delta <= 0), drop to Pilot immediately.
+            # 1. TARGET REACHED (Stop Heating)
             if delta <= 0:
-                # If we are currently burning (Height > 0), stop it.
                 if self._dataservice.get_flame_height() > 0:
-                    _LOGGER.info(f"Target Reached (Delta {delta:.1f}). Dropping to Pilot.")
                     if self._dataservice.keep_pilot_on:
                         await self._dataservice.async_set_flame_height(0)
                     else:
-                        # Only full shutdown if we are WAY over (Safety) or user hates pilots
-                        # Here we use a small buffer (-0.5) to avoid full shutoff on tiny overshoots
                         if delta <= -0.5 and not self._dataservice.keep_pilot_on:
                              await self._dataservice.async_guard_flame_off()
                         else:
                              await self._dataservice.async_set_flame_height(0)
 
-            # 2. START HEATING (The Floor)
-            # Only start if we are colder than the Hysteresis gap (0.5)
+            # 2. START HEATING (Start Heating)
             elif delta > self._hysteresis_start:
                 
-                # Ignite if dead
                 if not self._dataservice.is_on:
                     await self._dataservice.async_ignite_fireplace()
                     return 
                 
-                # Proportional Heating
-                target_height = int(delta * 6)
-                if target_height > 12: target_height = 12
-                if target_height < 1: target_height = 1 
+                # Proportional Heating Calculation
+                raw_height = int(delta * 6)
+                
+                # --- THE CLAMP FIX ---
+                # Ensure we never ask for more than 12 or less than 1
+                target_height = max(1, min(12, raw_height))
                 
                 current_height = self._dataservice.get_flame_height()
                 if current_height != target_height:
                     _LOGGER.info(f"Heating required (Delta {delta:.1f}). Setting flame to {target_height}.")
                     await self._dataservice.async_set_flame_height(target_height)
-
-            # 3. THE COASTING ZONE (Dead Band)
-            # Logic: 0 < delta <= 0.5
-            # We are slightly below target, but not enough to trigger a restart.
-            # We do NOTHING. We stay at Pilot (0) if we were there, or we keep heating if we were heating.
-            # This prevents the "constant firing up."
-            else:
-                # Optional: If we are currently blazing at Level 12 but within 0.5 deg of target,
-                # we might want to throttle down gently?
-                # For now, "Doing Nothing" is the most stable approach.
-                pass
