@@ -14,8 +14,7 @@ class MertikDataCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name="Mertik",
-            # REVERTED: Back to 15s to prevent hardware timeouts.
-            # Optimistic updates keep the UI snappy anyway.
+            # Reverted to 15s to prevent hardware timeouts
             update_interval=timedelta(seconds=15),
         )
         self.mertik = mertik
@@ -81,9 +80,11 @@ class MertikDataCoordinator(DataUpdateCoordinator):
                 _LOGGER.info("Pilot Switch ON: Sending Ignite Signal.")
                 await self.mertik.async_ignite_fireplace()
                 
-                _LOGGER.info("Waiting 25s for hardware ignition cycle...")
-                await asyncio.sleep(25)
+                # CHANGED: Increased from 25s to 40s to ensure motor is finished moving
+                _LOGGER.info("Waiting 40s for hardware ignition cycle...")
+                await asyncio.sleep(40)
                 
+                _LOGGER.info("Dropping flame to Pilot (Level 0).")
                 await self.mertik.async_set_flame_height(0)
                 
             else:
