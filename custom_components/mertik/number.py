@@ -1,6 +1,6 @@
 import logging
 from homeassistant.components.number import NumberEntity
-from homeassistant.exceptions import HomeAssistantError # Needed for the error popup
+from homeassistant.exceptions import HomeAssistantError
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,8 +31,7 @@ class MertikFlameHeight(NumberEntity):
         
         # --- THE LOCK CHECK ---
         if self._dataservice.is_thermostat_active:
-            _LOGGER.warning("User tried to set flame manually while Thermostat is Active.")
-            # This triggers a UI popup in the Dashboard
+            # We raise the error for the UI Popup, but we don't log a warning anymore.
             raise HomeAssistantError("Thermostat is Active! Turn it OFF to control flame manually.")
             
         target_step = int(value)

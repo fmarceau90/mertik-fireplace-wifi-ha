@@ -1,6 +1,7 @@
 import logging
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.exceptions import HomeAssistantError # <--- NEW IMPORT
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,22 +22,18 @@ class MertikMainSwitch(CoordinatorEntity, SwitchEntity):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice)
         self._dataservice = dataservice
-        # FRIENDLY NAME: "Fireplace Power"
         self._attr_name = name + " Power"
         self._attr_unique_id = entry_id + "-main"
         self._attr_icon = "mdi:fireplace"
 
     @property
     def is_on(self):
-        # It is "On" if there is any fire (Main or Pilot)
         return self._dataservice.is_on
 
     async def async_turn_on(self, **kwargs):
-        # Ignite to Auto (Standard start)
         await self._dataservice.async_ignite_fireplace()
 
     async def async_turn_off(self, **kwargs):
-        # Full Shutdown
         await self._dataservice.async_guard_flame_off()
         
     @property
@@ -49,7 +46,6 @@ class MertikAuxSwitch(CoordinatorEntity, SwitchEntity):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice)
         self._dataservice = dataservice
-        # FRIENDLY NAME: "Secondary Burner"
         self._attr_name = name + " Secondary Burner"
         self._attr_unique_id = entry_id + "-aux"
         self._attr_icon = "mdi:fire-alert"
@@ -74,7 +70,6 @@ class MertikPilotSwitch(CoordinatorEntity, SwitchEntity):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice)
         self._dataservice = dataservice
-        # FRIENDLY NAME: "Keep Pilot On"
         self._attr_name = name + " Keep Pilot On"
         self._attr_unique_id = entry_id + "-pilot"
         self._attr_icon = "mdi:gas-burner"
@@ -105,9 +100,14 @@ class MertikEcoSwitch(CoordinatorEntity, SwitchEntity):
 
     @property
     def is_on(self):
+        # The device returns "2" for Eco Mode
         return self._dataservice.operating_mode == "2"
 
     async def async_turn_on(self, **kwargs):
+        # --- THE LOCK CHECK ---
+        if self._dataservice.is_thermostat_active:
+            raise HomeAssistantError("Thermostat is Active! Turn it OFF to use Eco Mode.")
+
         await self._dataservice.mertik.async_set_eco()
         await self._dataservice.async_request_refresh()
 
