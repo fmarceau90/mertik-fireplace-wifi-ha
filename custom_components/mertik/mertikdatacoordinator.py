@@ -100,21 +100,28 @@ class MertikDataCoordinator(DataUpdateCoordinator):
 
     async def async_ignite_fireplace(self):
         await self.mertik.async_ignite_fireplace()
-        # No immediate refresh here either, ignition takes time
 
     async def async_guard_flame_off(self):
         await self.mertik.async_guard_flame_off()
         self.keep_pilot_on = False 
 
     async def async_set_flame_height(self, flame_height) -> None:
-        # 1. OPTIMISTIC UPDATE: Update UI immediately
+        # 1. LOGIC CHECK: If going to Pilot (0), Aux MUST be Off.
+        if flame_height == 0 and self.mertik.is_aux_on:
+            _LOGGER.info("Flame set to 0 (Pilot). Auto-turning OFF Secondary Burner.")
+            self.mertik._aux_on = False # Optimistic update for Aux
+            await self.mertik.async_aux_off() # Send command
+            # Small pause to let the Aux valve close before moving the Main valve
+            await asyncio.sleep(0.5)
+
+        # 2. OPTIMISTIC UPDATE: Update UI immediately
         self.mertik.flameHeight = flame_height
         self.async_update_listeners()
         
-        # 2. SEND COMMAND: Move the motor
+        # 3. SEND COMMAND: Move the motor
         await self.mertik.async_set_flame_height(flame_height)
         
-        # 3. DO NOT REFRESH. 
+        # 4. DO NOT REFRESH. 
 
     # --- GENTLE MODE COMMANDS (With Optimistic Updates) ---
     

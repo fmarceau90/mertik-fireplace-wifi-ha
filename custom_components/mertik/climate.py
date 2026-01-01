@@ -7,6 +7,7 @@ from homeassistant.components.climate import (
 )
 from homeassistant.const import UnitOfTemperature, ATTR_TEMPERATURE
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.restore_state import RestoreEntity  # <--- NEW IMPORT
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -15,7 +16,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
     dataservice = hass.data[DOMAIN].get(entry.entry_id)
     async_add_entities([MertikClimate(dataservice, entry.entry_id, entry.data["name"])])
 
-class MertikClimate(CoordinatorEntity, ClimateEntity):
+# Inherit from RestoreEntity to gain "Memory"
+class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice)
         self._dataservice = dataservice
@@ -25,6 +27,7 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
         self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
         
+        # Defaults (will be overwritten by restore if available)
         self._target_temp = 21.0
         self._attr_hvac_mode = HVACMode.OFF 
         self._hysteresis = 0.5 
@@ -32,6 +35,27 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
     @property
     def device_info(self):
         return self._dataservice.device_info
+
+    async def async_added_to_hass(self):
+        """Run when entity about to be added."""
+        # 1. Hook up the Coordinator (Standard behavior)
+        await super().async_added_to_hass()
+        
+        # 2. Restore State (The Memory Fix)
+        last_state = await self.async_get_last_state()
+        if last_state:
+            _LOGGER.info(f"Restoring thermostat state: {last_state.state}")
+            
+            # Restore HVAC Mode (Heat vs Off)
+            if last_state.state in [HVACMode.HEAT, HVACMode.OFF]:
+                self._attr_hvac_mode = last_state.state
+            
+            # Restore Target Temperature
+            if ATTR_TEMPERATURE in last_state.attributes:
+                try:
+                    self._target_temp = float(last_state.attributes[ATTR_TEMPERATURE])
+                except (ValueError, TypeError):
+                    self._target_temp = 21.0 # Fallback if data is corrupt
 
     @property
     def current_temperature(self):
@@ -100,7 +124,6 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
             
             # 1. SHUTDOWN (Too Hot)
             if delta <= -0.5:
-                # Only turn off if we are actually burning
                 if self._dataservice.is_on and self._dataservice.get_flame_height() > 0:
                     if self._dataservice.keep_pilot_on:
                         await self._dataservice.async_set_flame_height(0)
@@ -113,15 +136,9 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
                     await self._dataservice.async_ignite_fireplace()
                     return 
                 
-                # Proportional Calculation
                 target_height = int(delta * 6)
-                
-                # CLAMPING LOGIC
                 if target_height > 12: target_height = 12
-                
-                # CRITICAL FIX: The Floor.
-                # If delta is positive (we need heat), we MUST be at least at level 1.
-                # Level 0 is Pilot (No Heat), which creates the loop you saw.
+                # FLOOR FIX: If we need heat, we cannot be at 0.
                 if target_height < 1: target_height = 1 
                 
                 current_height = self._dataservice.get_flame_height()
