@@ -1,6 +1,29 @@
 import logging
 import asyncio
 import socket 
+from .const import (
+    UDP_PORT_DISCOVERY,
+    UDP_PORT_TARGET,
+    DISCOVERY_PAYLOAD,
+    CMD_PREFIX,
+    RESPONSE_PREFIX_1,
+    RESPONSE_PREFIX_2,
+    CMD_STATUS_POLL,
+    CMD_IGNITE,
+    CMD_SHUTDOWN,
+    CMD_PILOT_STANDBY,
+    CMD_AUX_ON,
+    CMD_AUX_OFF,
+    CMD_LIGHT_ON,
+    CMD_LIGHT_OFF,
+    CMD_ECO_MODE,
+    CMD_MANUAL_MODE,
+    CMD_FLAME_PREFIX,
+    CMD_FLAME_SUFFIX,
+    FLAME_STEPS,
+    CMD_LIGHT_SET_PREFIX,
+    CMD_LIGHT_SET_SUFFIX
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,14 +87,12 @@ class Mertik:
     # --- Discovery ---
     @staticmethod
     def get_devices():
-        UDP_PORT = 30719
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            sock.bind(("", UDP_PORT))
-            MESSAGE = "000100f6"
-            hexstring = bytearray.fromhex(MESSAGE)
+            sock.bind(("", UDP_PORT_DISCOVERY))
+            hexstring = bytearray.fromhex(DISCOVERY_PAYLOAD)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            sock.sendto(hexstring, ("<broadcast>", 30718))
+            sock.sendto(hexstring, ("<broadcast>", UDP_PORT_TARGET))
 
             sock.settimeout(3.0)
             data, addr = sock.recvfrom(1024)
@@ -83,36 +104,34 @@ class Mertik:
 
     # --- Async Actions ---
     async def async_standBy(self):
-        await self._async_send_command("3136303003")
+        await self._async_send_command(CMD_PILOT_STANDBY)
 
     async def async_aux_on(self):
-        await self._async_send_command("32303031030a")
+        await self._async_send_command(CMD_AUX_ON)
 
     async def async_aux_off(self):
-        await self._async_send_command("32303030030a")
+        await self._async_send_command(CMD_AUX_OFF)
 
     async def async_ignite_fireplace(self):
-        await self._async_send_command("314103")
+        await self._async_send_command(CMD_IGNITE)
 
     async def async_refresh_status(self):
-        await self._async_send_command("303303")
+        await self._async_send_command(CMD_STATUS_POLL)
 
     async def async_guard_flame_off(self):
-        await self._async_send_command("313003")
+        await self._async_send_command(CMD_SHUTDOWN)
 
     async def async_light_on(self):
-        await self._async_send_command("3330303103")
+        await self._async_send_command(CMD_LIGHT_ON)
 
     async def async_light_off(self):
-        await self._async_send_command("3330303003")
+        await self._async_send_command(CMD_LIGHT_OFF)
         
     async def async_set_eco(self):
-        msg = "4233303103"
-        await self._async_send_command(msg)
+        await self._async_send_command(CMD_ECO_MODE)
 
     async def async_set_manual(self):
-        msg = "423003"
-        await self._async_send_command(msg)
+        await self._async_send_command(CMD_MANUAL_MODE)
 
     async def async_set_light_brightness(self, brightness) -> None:
         normalized_brightness = (brightness - 1) / 254 * 100
@@ -125,14 +144,13 @@ class Mertik:
             if l >= 40: l += 1
             device_code = f"{l:02d}{l:02d}"
 
-        msg = f"33304645{device_code}03"
+        msg = f"{CMD_LIGHT_SET_PREFIX}{device_code}{CMD_LIGHT_SET_SUFFIX}"
         await self._async_send_command(msg)
 
     async def async_set_flame_height(self, flame_height) -> None:
-        steps = ["3030", "3830", "3842", "3937", "4132", "4145", "4239", "4335", "4430", "4443", "4537", "4633", "4646"]
-        if 0 <= flame_height < len(steps):
-            l = steps[flame_height]
-            msg = "3136" + l + "03"
+        if 0 <= flame_height < len(FLAME_STEPS):
+            l = FLAME_STEPS[flame_height]
+            msg = CMD_FLAME_PREFIX + l + CMD_FLAME_SUFFIX
             await self._async_send_command(msg)
 
     # --- Core Communication ---
@@ -142,9 +160,10 @@ class Mertik:
             RETRY_DELAY = 2.0 
             
             if not isinstance(msg, str): msg = str(msg)
-            send_command_prefix = "0233303330333033303830"
-            full_payload = bytearray.fromhex(send_command_prefix + msg)
-            process_status_prefixes = ("303030300003", "030300000003")
+            # Use the Constant Prefix
+            full_payload = bytearray.fromhex(CMD_PREFIX + msg)
+            # Use the Constant Response Prefixes
+            process_status_prefixes = (RESPONSE_PREFIX_1, RESPONSE_PREFIX_2)
             last_error = None
 
             try:
@@ -219,22 +238,19 @@ class Mertik:
             # 5. Temp
             raw_temp = int("0x" + statusStr[30:32], 0) / 10
             
-            # Initialization Check: If we have 0.0, ACCEPT ANYTHING immediately.
-            # This ensures we don't get stuck in a "Waiting for perfect data" loop.
+            # Initial Load
             if self._ambient_temperature == 0.0:
                  if 0.0 < raw_temp < 60.0:
                      _LOGGER.info(f"System initialized with temperature: {raw_temp}")
                      self._ambient_temperature = raw_temp
                      return
 
-            # Standard Glitch Filter
+            # Glitch Filter
             if 1.0 < raw_temp < 50.0:
                 diff = abs(raw_temp - self._ambient_temperature)
                 
-                # If diff is HUGE (> 5 degrees)
                 if diff > 5.0:
                     self._temp_glitch_count += 1
-                    # We wait for 3 consecutive readings (approx 45s) before accepting a huge jump
                     if self._temp_glitch_count <= 3:
                         return 
                     else:
