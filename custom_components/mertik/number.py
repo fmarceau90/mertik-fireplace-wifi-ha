@@ -1,47 +1,49 @@
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+import logging
 from homeassistant.components.number import NumberEntity
 from .const import DOMAIN
 
+_LOGGER = logging.getLogger(__name__)
+
 async def async_setup_entry(hass, entry, async_add_entities):
     dataservice = hass.data[DOMAIN].get(entry.entry_id)
-    entities = []
-    entities.append(
-        MertikFlameHeightEntity(hass, dataservice, entry.entry_id, entry.data["name"])
-    )
-    async_add_entities(entities)
+    async_add_entities([MertikFlameHeight(dataservice, entry.entry_id, entry.data["name"])])
 
-class MertikFlameHeightEntity(CoordinatorEntity, NumberEntity):
-    def __init__(self, hass, dataservice, entry_id, name):
-        super().__init__(dataservice)
+class MertikFlameHeight(NumberEntity):
+    """The Flame Height Slider (0-12)."""
+    
+    def __init__(self, dataservice, entry_id, name):
         self._dataservice = dataservice
         self._attr_name = name + " Flame Height"
         self._attr_unique_id = entry_id + "-FlameHeight"
+        self._attr_icon = "mdi:fire"
         
-        # UI Range: 1 (Low Burner) to 12 (High Burner)
-        # We REMOVED Pilot (Index 0) from the valid set options
-        self._attr_native_min_value = 1
-        self._attr_native_max_value = 12 
+        # KEY CHANGE: Allow 0.
+        # 0 = Pilot Only (Standby)
+        # 1 = Minimum Main Flame
+        # 12 = Maximum Main Flame
+        self._attr_native_min_value = 0
+        self._attr_native_max_value = 12
         self._attr_native_step = 1
+
+    @property
+    def native_value(self):
+        """Return the current flame height."""
+        return self._dataservice.get_flame_height()
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the flame height."""
+        target_step = int(value)
+        
+        # If user drags to 0, we send the Standby/Pilot command
+        _LOGGER.info(f"Manually setting flame height to {target_step}")
+        await self._dataservice.async_set_flame_height(target_step)
 
     @property
     def device_info(self):
         return self._dataservice.device_info
-
-    @property
-    def native_value(self) -> float:
-        # Get internal index (0-12)
-        idx = self._dataservice.get_flame_height()
-        
-        # If idx is 0 (Pilot), we return 0 (which is below min, showing "Off" effectively on some UIs, or just 0)
-        # If idx is > 0, we map it directly. (Index 1 = Level 1)
-        return float(idx)
-
-    async def async_set_native_value(self, value: float) -> None:
-        # User selects 1-12. This maps directly to Index 1-12.
-        # They cannot select 0 (Pilot) here anymore.
-        index = int(value)
-        await self._dataservice.async_set_flame_height(index)
-
-    @property
-    def icon(self) -> str:
-        return "mdi:fire"
+    
+    # Optional: Update the entity when the coordinator updates
+    async def async_added_to_hass(self):
+        self.async_on_remove(
+            self._dataservice.async_add_listener(self.async_write_ha_state)
+        )
