@@ -9,6 +9,7 @@ class MertikDataCoordinator(DataUpdateCoordinator):
     """Mertik custom coordinator."""
 
     def __init__(self, hass, mertik, entry_id, device_name):
+        """Initialize my coordinator."""
         super().__init__(
             hass,
             _LOGGER,
@@ -19,12 +20,13 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         self.entry_id = entry_id
         self.device_name = device_name
         
-        # --- NEW: Memory for the Pilot Switch ---
+        # Memory for the Pilot Switch
         # If True, the system will revert to Pilot instead of turning off
         self.keep_pilot_on = False 
 
     @property
     def device_info(self):
+        """Return device registry information for this entity."""
         return {
             "identifiers": {(DOMAIN, self.entry_id)},
             "name": self.device_name,
@@ -33,39 +35,26 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         }
 
     async def _async_update_data(self):
+        """Fetch data from API endpoint."""
         try:
-            await self.mertik.async_refresh_status()
-            
-            # Auto-Sync logic: If the fire is OFF physically, 
-            # our Pilot Switch memory should probably reset to False
-            if not self.mertik.is_on and not self.mertik.is_igniting:
-                self.keep_pilot_on = False
-                
-            return self.mertik
-        except Exception as err:
-            raise UpdateFailed(f"Error communicating with API: {err}")
-
-async def _async_update_data(self):
-        try:
+            # 1. Get fresh data
             await self.mertik.async_refresh_status()
 
+            # 2. SYNC LOGIC (The Fix)
+            # If the fire is completely OFF/Igniting, reset our switch
             if not self.mertik.is_on and not self.mertik.is_igniting:
                 self.keep_pilot_on = False
             
             # If the fire is ON and sitting at Pilot (Flame Height 0), 
             # we MUST tell the system "The User wants Pilot" (Set True).
-            # This prevents the Thermostat from killing it.
             elif self.mertik.is_on and self.mertik.get_flame_height() == 0:
                 self.keep_pilot_on = True
             
-            # (Optional) If the fire is ON and Main Burner is up (Height > 0),
-            # we don't force keep_pilot_on to True or False. We let the
-            # Thermostat decide based on temperature.
             return self.mertik
         except Exception as err:
             raise UpdateFailed(f"Error communicating with API: {err}")
 
-    # --- Properties ---
+    # --- Properties (Read from internal state) ---
     @property
     def is_on(self) -> bool:
         return self.mertik.is_on or self.mertik.is_igniting
@@ -93,10 +82,10 @@ async def _async_update_data(self):
     def get_flame_height(self) -> int:
         return self.mertik.get_flame_height()
 
-    # --- Async Actions ---
+    # --- Async Actions (Write to device) ---
     
-    # NEW: Dedicated Pilot Switch Actions
     async def async_toggle_pilot(self, enable: bool):
+        """Dedicated Pilot Switch Action."""
         self.keep_pilot_on = enable
         if enable:
             # If not already on, ignite. Then set to lowest height (Pilot)
@@ -110,7 +99,6 @@ async def _async_update_data(self):
         await self.async_request_refresh()
 
     async def async_ignite_fireplace(self):
-        # Called by Thermostat/Main Switch
         await self.mertik.async_ignite_fireplace()
         await self.async_request_refresh()
 
