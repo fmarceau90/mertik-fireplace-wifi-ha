@@ -19,6 +19,8 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         self.mertik = mertik
         self.entry_id = entry_id
         self.device_name = device_name
+        
+        # Memory for Pilot Switch: Default False
         self.keep_pilot_on = False 
 
     @property
@@ -34,10 +36,15 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         try:
             await self.mertik.async_refresh_status()
 
-            # Sync Logic
-            if not self.mertik.is_on and not self.mertik.is_igniting:
-                self.keep_pilot_on = False
-            elif self.mertik.is_on and self.mertik.get_flame_height() == 0:
+            # --- SYNC LOGIC (UPDATED FOR STABILITY) ---
+            # 1. REMOVED "Auto-Off" Logic:
+            # We do NOT automatically set keep_pilot_on = False if the fire reports Off.
+            # This prevents the switch from turning itself off during connection glitches.
+            # The only way to turn it off is for the user to toggle the switch.
+
+            # 2. Auto-Detect Pilot:
+            # If the fire IS physically on Pilot, we ensure the variable matches.
+            if self.mertik.is_on and self.mertik.get_flame_height() == 0:
                 self.keep_pilot_on = True
             
             return self.mertik
@@ -83,11 +90,10 @@ class MertikDataCoordinator(DataUpdateCoordinator):
                 _LOGGER.info("Pilot Switch ON: Sending Ignite Signal.")
                 await self.mertik.async_ignite_fireplace()
                 
-                # --- CRITICAL FIX: WAIT FOR IGNITION ---
-                # The hardware CANNOT receive commands while sparking/moving motor.
-                # We must wait ~25 seconds for the main burner to light up 
-                # before we can tell it to drop back down to Pilot.
-                _LOGGER.info("Waiting 25s for hardware ignition cycle to complete...")
+                # --- CRITICAL: WAIT FOR IGNITION ---
+                # Hardware cannot receive commands while sparking.
+                # Wait 25s for main burner to light up before dropping to Pilot.
+                _LOGGER.info("Waiting 25s for hardware ignition cycle...")
                 await asyncio.sleep(25)
                 
             _LOGGER.info("Dropping flame to Pilot (Level 0).")
@@ -105,6 +111,7 @@ class MertikDataCoordinator(DataUpdateCoordinator):
 
     async def async_guard_flame_off(self):
         await self.mertik.async_guard_flame_off()
+        # Only hard shutdown resets the pilot memory
         self.keep_pilot_on = False 
         await self.async_request_refresh()
 

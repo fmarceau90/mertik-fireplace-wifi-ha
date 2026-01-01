@@ -9,7 +9,7 @@ class Mertik:
         self.ip = ip
         self.port = port
         
-        # --- NEW: Traffic Control ---
+        # --- TRAFFIC CONTROL ---
         # This lock ensures we never send 2 commands at once
         self._lock = asyncio.Lock()
         
@@ -150,10 +150,9 @@ class Mertik:
 
     # --- Core Communication ---
     async def _async_send_command(self, msg):
-        """Async command sender with Retry Logic and Traffic Control."""
+        """Async command sender with Retry Logic, Traffic Lock, AND Cool Down."""
         
-        # --- NEW: TRAFFIC LOCK ---
-        # Wait until the line is clear before doing ANYTHING
+        # 1. ACQUIRE LOCK (Wait for line to clear)
         async with self._lock:
         
             MAX_RETRIES = 3
@@ -169,65 +168,59 @@ class Mertik:
 
             last_error = None
 
-            for attempt in range(1, MAX_RETRIES + 1):
-                writer = None
-                try:
-                    # 1. Connect (10s Timeout)
-                    future = asyncio.open_connection(self.ip, self.port)
-                    reader, writer = await asyncio.wait_for(future, timeout=10.0)
-                    
-                    # 2. Send
-                    writer.write(full_payload)
-                    await writer.drain()
+            try:
+                for attempt in range(1, MAX_RETRIES + 1):
+                    writer = None
+                    try:
+                        # Connect
+                        future = asyncio.open_connection(self.ip, self.port)
+                        reader, writer = await asyncio.wait_for(future, timeout=10.0)
+                        
+                        # Send
+                        writer.write(full_payload)
+                        await writer.drain()
 
-                    # 3. Read (10s Timeout)
-                    data = await asyncio.wait_for(reader.read(1024), timeout=10.0)
+                        # Read
+                        data = await asyncio.wait_for(reader.read(1024), timeout=10.0)
 
-                    if not data:
-                        raise ConnectionError("Empty response")
+                        if not data:
+                            raise ConnectionError("Empty response")
 
-                    # 4. Process Data
-                    temp_data = data.decode("ascii", errors='ignore')
-                    if len(temp_data) > 0:
-                        temp_data = temp_data[1:]
-                    
-                    temp_data = temp_data.replace('\r', ';')
+                        # Process
+                        temp_data = data.decode("ascii", errors='ignore')
+                        if len(temp_data) > 0:
+                            temp_data = temp_data[1:]
+                        
+                        temp_data = temp_data.replace('\r', ';')
 
-                    if temp_data.startswith(process_status_prefixes):
-                        self._process_status(temp_data)
-                    
-                    return # Success - Exit the loop
+                        if temp_data.startswith(process_status_prefixes):
+                            self._process_status(temp_data)
+                        
+                        # SUCCESS! Return immediately
+                        return 
 
-                except (OSError, asyncio.TimeoutError, ConnectionError) as e:
-                    last_error = e
-                    # Log the warning but keep trying
-                    _LOGGER.warning(
-                        f"Attempt {attempt}/{MAX_RETRIES} failed: {repr(e)}", 
-                        exc_info=True
-                    )
-                    
-                    if writer:
-                        try:
-                            writer.close()
-                            await writer.wait_closed()
-                        except Exception:
-                            pass
+                    except (OSError, asyncio.TimeoutError, ConnectionError) as e:
+                        last_error = e
+                        _LOGGER.warning(f"Attempt {attempt} failed: {repr(e)}", exc_info=True)
+                        
+                        if writer:
+                            try:
+                                writer.close()
+                                await writer.wait_closed()
+                            except Exception:
+                                pass
 
-                    if attempt < MAX_RETRIES:
-                        await asyncio.sleep(RETRY_DELAY)
-                    else:
-                        _LOGGER.error(
-                            f"Mertik unreachable at {self.ip} - Last Error: {repr(last_error)}",
-                            exc_info=True
-                        )
+                        if attempt < MAX_RETRIES:
+                            await asyncio.sleep(RETRY_DELAY)
+                        else:
+                            _LOGGER.error(f"Unreachable: {repr(last_error)}", exc_info=True)
 
-                finally:
-                    if writer:
-                        try:
-                            writer.close()
-                            await writer.wait_closed()
-                        except Exception:
-                            pass
+            finally:
+                # --- MANDATORY COOL DOWN ---
+                # Force a 1.0s pause BEFORE releasing the lock.
+                # This ensures HA cannot slam the device with a 'Refresh' 
+                # immediately after a command finishes.
+                await asyncio.sleep(1.0) 
 
     def _process_status(self, statusStr):
         """Parses the raw status string."""
