@@ -75,6 +75,12 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
 
     async def _control_heating(self):
         """The Smart Logic with Pilot Support."""
+
+        # --- SAFETY CHECK: If the last update failed (Timeout), DO NOT ACT ---
+        if not self.coordinator.last_update_success:
+            _LOGGER.warning("Connection lost to fireplace. Thermostat holding state.")
+            return
+
         current_temp = self.current_temperature
         
         # 1. System Set to OFF

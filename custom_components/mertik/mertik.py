@@ -9,6 +9,10 @@ class Mertik:
         self.ip = ip
         self.port = port
         
+        # --- NEW: Traffic Control ---
+        # This lock ensures we never send 2 commands at once
+        self._lock = asyncio.Lock()
+        
         # Initialize state variables
         self.on = False
         self.mode = None 
@@ -95,7 +99,6 @@ class Mertik:
         await self._async_send_command("314103")
 
     async def async_refresh_status(self):
-        # Your specific Status Command
         await self._async_send_command("303303")
 
     async def async_guard_flame_off(self):
@@ -147,79 +150,84 @@ class Mertik:
 
     # --- Core Communication ---
     async def _async_send_command(self, msg):
-        """Async command sender with Retry Logic."""
-        MAX_RETRIES = 3
-        RETRY_DELAY = 2.0
+        """Async command sender with Retry Logic and Traffic Control."""
         
-        if not isinstance(msg, str):
-            msg = str(msg)
+        # --- NEW: TRAFFIC LOCK ---
+        # Wait until the line is clear before doing ANYTHING
+        async with self._lock:
+        
+            MAX_RETRIES = 3
+            RETRY_DELAY = 2.0
             
-        send_command_prefix = "0233303330333033303830"
-        full_payload = bytearray.fromhex(send_command_prefix + msg)
-        
-        process_status_prefixes = ("303030300003", "030300000003")
-
-        last_error = None
-
-        for attempt in range(1, MAX_RETRIES + 1):
-            writer = None
-            try:
-                # 1. Connect (10s Timeout)
-                future = asyncio.open_connection(self.ip, self.port)
-                reader, writer = await asyncio.wait_for(future, timeout=10.0)
+            if not isinstance(msg, str):
+                msg = str(msg)
                 
-                # 2. Send
-                writer.write(full_payload)
-                await writer.drain()
+            send_command_prefix = "0233303330333033303830"
+            full_payload = bytearray.fromhex(send_command_prefix + msg)
+            
+            process_status_prefixes = ("303030300003", "030300000003")
 
-                # 3. Read (10s Timeout)
-                data = await asyncio.wait_for(reader.read(1024), timeout=10.0)
+            last_error = None
 
-                if not data:
-                    raise ConnectionError("Empty response")
+            for attempt in range(1, MAX_RETRIES + 1):
+                writer = None
+                try:
+                    # 1. Connect (10s Timeout)
+                    future = asyncio.open_connection(self.ip, self.port)
+                    reader, writer = await asyncio.wait_for(future, timeout=10.0)
+                    
+                    # 2. Send
+                    writer.write(full_payload)
+                    await writer.drain()
 
-                # 4. Process Data
-                temp_data = data.decode("ascii", errors='ignore')
-                if len(temp_data) > 0:
-                    temp_data = temp_data[1:]
-                
-                temp_data = temp_data.replace('\r', ';')
+                    # 3. Read (10s Timeout)
+                    data = await asyncio.wait_for(reader.read(1024), timeout=10.0)
 
-                if temp_data.startswith(process_status_prefixes):
-                    self._process_status(temp_data)
-                
-                return # Success
+                    if not data:
+                        raise ConnectionError("Empty response")
 
-            except (OSError, asyncio.TimeoutError, ConnectionError) as e:
-                last_error = e
-                # --- LOGGING UPGRADE ---
-                _LOGGER.warning(
-                    f"Attempt {attempt}/{MAX_RETRIES} failed: {repr(e)}", 
-                    exc_info=True
-                )
-                
-                if writer:
-                    try:
-                        writer.close()
-                        await writer.wait_closed()
-                    except Exception:
-                        pass
+                    # 4. Process Data
+                    temp_data = data.decode("ascii", errors='ignore')
+                    if len(temp_data) > 0:
+                        temp_data = temp_data[1:]
+                    
+                    temp_data = temp_data.replace('\r', ';')
 
-                if attempt < MAX_RETRIES:
-                    await asyncio.sleep(RETRY_DELAY)
-                else:
-                    _LOGGER.error(
-                        f"Mertik unreachable at {self.ip} - Last Error: {repr(last_error)}",
+                    if temp_data.startswith(process_status_prefixes):
+                        self._process_status(temp_data)
+                    
+                    return # Success - Exit the loop
+
+                except (OSError, asyncio.TimeoutError, ConnectionError) as e:
+                    last_error = e
+                    # Log the warning but keep trying
+                    _LOGGER.warning(
+                        f"Attempt {attempt}/{MAX_RETRIES} failed: {repr(e)}", 
                         exc_info=True
                     )
+                    
+                    if writer:
+                        try:
+                            writer.close()
+                            await writer.wait_closed()
+                        except Exception:
+                            pass
 
-            finally:
-                if writer:
-                    try:
-                        writer.close()
-                        await writer.wait_closed()
-                    except Exception:
-                        pass
+                    if attempt < MAX_RETRIES:
+                        await asyncio.sleep(RETRY_DELAY)
+                    else:
+                        _LOGGER.error(
+                            f"Mertik unreachable at {self.ip} - Last Error: {repr(last_error)}",
+                            exc_info=True
+                        )
+
+                finally:
+                    if writer:
+                        try:
+                            writer.close()
+                            await writer.wait_closed()
+                        except Exception:
+                            pass
 
     def _process_status(self, statusStr):
         """Parses the raw status string."""
