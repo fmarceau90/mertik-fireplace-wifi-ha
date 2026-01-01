@@ -134,7 +134,6 @@ class Mertik:
             l = steps[flame_height]
             msg = "3136" + l + "03"
             await self._async_send_command(msg)
-            # No Status Refresh here (Optimization)
 
     # --- Core Communication ---
     async def _async_send_command(self, msg):
@@ -205,13 +204,10 @@ class Mertik:
             self._shutting_down = self._from_bit_status(statusBits, 7)
             self._guard_flame_on = self._from_bit_status(statusBits, 8) 
             self._igniting = self._from_bit_status(statusBits, 11)
-            # RAW AUX STATUS
             raw_aux_on = self._from_bit_status(statusBits, 12)
             self._light_on = self._from_bit_status(statusBits, 13)
 
-            # --- GHOSTBUSTER LOGIC ---
-            # If flame is 0 (Pilot/Standby), we enforce Aux = OFF.
-            # This filters out garbage data during shutdowns.
+            # Ghostbuster: If flame is 0, Aux must be Off
             if self.flameHeight == 0:
                 self._aux_on = False
             else:
@@ -221,15 +217,30 @@ class Mertik:
             self._light_brightness = round(((int("0x" + statusStr[20:22], 0) - 100) / 151) * 255)
             if self._light_brightness < 0 or not self._light_on: self._light_brightness = 0
 
-            # 5. Temp (WITH DEBOUNCER)
+            # 5. Temp (WITH "ZOMBIE DATA" FILTER)
             raw_temp = int("0x" + statusStr[30:32], 0) / 10
             
+            # --- FILTER START ---
+            
+            # Rule 1: The "Zombie 10C" Check.
+            # If the temp is EXACTLY the 50F/10C hardware default, and we don't 
+            # already trust that it's this cold, we DROP it.
+            # This protects us from the "Reboot Glitch" that sets a false floor.
+            if 9.9 <= raw_temp <= 10.3:
+                 if self._ambient_temperature == 0 or self._ambient_temperature > 12:
+                     _LOGGER.debug(f"Dropping suspicious 'Zombie' temperature: {raw_temp}")
+                     return
+
+            # Rule 2: The standard "Wild Jump" Filter
             if 1.0 < raw_temp < 50.0:
                 diff = abs(raw_temp - self._ambient_temperature)
+                
+                # If we have a valid previous temp, and new temp jumps > 5.0
                 if self._ambient_temperature > 0 and diff > 5.0:
                     self._temp_glitch_count += 1
                     if self._temp_glitch_count <= 3:
-                        _LOGGER.warning(f"Ignored temp glitch: {raw_temp} (Prev: {self._ambient_temperature}). Count: {self._temp_glitch_count}")
+                        # Changed to DEBUG so it doesn't spam warnings for known behavior
+                        _LOGGER.debug(f"Ignored temp glitch: {raw_temp} (Prev: {self._ambient_temperature}). Count: {self._temp_glitch_count}")
                         return 
                     else:
                         _LOGGER.warning(f"Accepting large temp change to {raw_temp} after verification.")
