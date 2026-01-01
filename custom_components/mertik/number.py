@@ -17,11 +17,10 @@ class MertikFlameHeightEntity(CoordinatorEntity, NumberEntity):
         self._attr_name = name + " Flame Height"
         self._attr_unique_id = entry_id + "-FlameHeight"
         
-        # UI 1 = Index 0 (Pilot)
+        # UI Range: 1 (Low Burner) to 12 (High Burner)
+        # We REMOVED Pilot (Index 0) from the valid set options
         self._attr_native_min_value = 1
-        # Array in mertik.py has 13 steps (0 to 12). 
-        # So UI max is 13 (Index 12).
-        self._attr_native_max_value = 13 
+        self._attr_native_max_value = 12 
         self._attr_native_step = 1
 
     @property
@@ -30,12 +29,17 @@ class MertikFlameHeightEntity(CoordinatorEntity, NumberEntity):
 
     @property
     def native_value(self) -> float:
-        # Convert internal index (0-based) to UI value (1-based)
-        return self._dataservice.get_flame_height() + 1
+        # Get internal index (0-12)
+        idx = self._dataservice.get_flame_height()
+        
+        # If idx is 0 (Pilot), we return 0 (which is below min, showing "Off" effectively on some UIs, or just 0)
+        # If idx is > 0, we map it directly. (Index 1 = Level 1)
+        return float(idx)
 
     async def async_set_native_value(self, value: float) -> None:
-        # Convert UI value (1-based) to internal index (0-based)
-        index = int(value) - 1
+        # User selects 1-12. This maps directly to Index 1-12.
+        # They cannot select 0 (Pilot) here anymore.
+        index = int(value)
         await self._dataservice.async_set_flame_height(index)
 
     @property

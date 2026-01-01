@@ -25,10 +25,9 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
         self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
         
-        # Default Settings
         self._target_temp = 21.0
-        self._attr_hvac_mode = HVACMode.OFF  # Start as OFF by default
-        self._hysteresis = 0.5  # Prevent rapid on/off switching
+        self._attr_hvac_mode = HVACMode.OFF 
+        self._hysteresis = 0.5
 
     @property
     def device_info(self):
@@ -40,16 +39,19 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def hvac_mode(self):
-        # Return our internal 'Virtual' mode, not just the flame state
         return self._attr_hvac_mode
 
     @property
     def hvac_action(self):
-        """Return the current running action."""
         if self._attr_hvac_mode == HVACMode.OFF:
             return HVACAction.OFF
+        # If fire is active and ABOVE Pilot level, we are Heating
+        # If fire is just at Pilot (Index 0), we are technically 'Idle'
         if self._dataservice.is_on:
-            return HVACAction.HEATING
+             if self._dataservice.get_flame_height() > 0:
+                 return HVACAction.HEATING
+             else:
+                 return HVACAction.IDLE
         return HVACAction.IDLE
 
     @property
@@ -57,45 +59,56 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         return self._target_temp
 
     async def async_set_hvac_mode(self, hvac_mode):
-        """Set new target hvac mode."""
         self._attr_hvac_mode = hvac_mode
-        await self._control_heating() # Check logic immediately
+        await self._control_heating()
         self.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs):
-        """Set new target temperature."""
         if ATTR_TEMPERATURE in kwargs:
             self._target_temp = kwargs[ATTR_TEMPERATURE]
-            await self._control_heating() # Check logic immediately
+            await self._control_heating()
             self.async_write_ha_state()
 
     def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        # This runs every time the sensor updates (every 15s)
         self.hass.async_create_task(self._control_heating())
         super()._handle_coordinator_update()
 
     async def _control_heating(self):
-        """The 'Brain': Decide if we need to turn on or off."""
+        """The Smart Logic with Pilot Support."""
         current_temp = self.current_temperature
         
-        # 1. If System is OFF, ensure fire is OFF
+        # 1. System Set to OFF
         if self._attr_hvac_mode == HVACMode.OFF:
+            # If User wants Pilot, drop to Pilot. Else, Shutdown.
             if self._dataservice.is_on:
-                _LOGGER.info("Thermostat set to OFF: Stopping Fire.")
-                await self._dataservice.async_guard_flame_off()
+                if self._dataservice.keep_pilot_on:
+                     if self._dataservice.get_flame_height() > 0:
+                         await self._dataservice.async_set_flame_height(0)
+                else:
+                     await self._dataservice.async_guard_flame_off()
             return
 
-        # 2. If System is HEAT, check the temperature
+        # 2. System Set to HEAT
         if self._attr_hvac_mode == HVACMode.HEAT:
-            # Too Hot? (Current > Target + Buffer) -> Turn OFF
+            # TOO HOT -> Stop Heating (Drop to Pilot OR Shutdown)
             if current_temp >= (self._target_temp + self._hysteresis):
-                if self._dataservice.is_on:
-                    _LOGGER.info(f"reached target {self._target_temp}: Stopping Fire.")
-                    await self._dataservice.async_guard_flame_off()
-            
-            # Too Cold? (Current < Target - Buffer) -> Turn ON
+                if self._dataservice.is_on and self._dataservice.get_flame_height() > 0:
+                    _LOGGER.info("Target reached.")
+                    
+                    if self._dataservice.keep_pilot_on:
+                        _LOGGER.info("Dropping to Pilot (Switch is ON).")
+                        await self._dataservice.async_set_flame_height(0)
+                    else:
+                        _LOGGER.info("Shutting down (Switch is OFF).")
+                        await self._dataservice.async_guard_flame_off()
+
+            # TOO COLD -> Start Heating
             elif current_temp <= (self._target_temp - self._hysteresis):
-                if not self._dataservice.is_on and not self._dataservice.is_igniting:
-                    _LOGGER.info(f"Below target {self._target_temp}: Igniting Fire.")
+                # If we are Off OR just in Pilot mode -> Boost it!
+                if not self._dataservice.is_on or self._dataservice.get_flame_height() == 0:
+                    _LOGGER.info("Too cold. Boosting flame.")
+                    # Ignite / Set to a decent starting height (e.g. Index 1 or higher)
+                    # For Mertik, ignite usually goes to High or Last? 
+                    # Let's just Ignite (defaults) or Set to Max? 
+                    # Usually ignite is enough to start the cycle.
                     await self._dataservice.async_ignite_fireplace()
