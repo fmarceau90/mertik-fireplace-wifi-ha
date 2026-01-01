@@ -45,8 +45,6 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
     def hvac_action(self):
         if self._attr_hvac_mode == HVACMode.OFF:
             return HVACAction.OFF
-        # If fire is active and ABOVE Pilot level, we are Heating
-        # If fire is just at Pilot (Index 0), we are technically 'Idle'
         if self._dataservice.is_on:
              if self._dataservice.get_flame_height() > 0:
                  return HVACAction.HEATING
@@ -59,8 +57,23 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         return self._target_temp
 
     async def async_set_hvac_mode(self, hvac_mode):
+        """Handle User switching the Mode."""
         self._attr_hvac_mode = hvac_mode
-        await self._control_heating()
+        
+        # If User explicitly clicks OFF, we shut everything down.
+        if hvac_mode == HVACMode.OFF:
+            if self._dataservice.keep_pilot_on:
+                 # If pilot pref is active, drop to Pilot (don't kill it)
+                 if self._dataservice.get_flame_height() > 0:
+                     await self._dataservice.async_set_flame_height(0)
+            else:
+                 # Full shutdown
+                 await self._dataservice.async_guard_flame_off()
+        
+        # If User clicks HEAT, we run the logic check immediately
+        elif hvac_mode == HVACMode.HEAT:
+            await self._control_heating()
+            
         self.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs):
@@ -74,54 +87,36 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         super()._handle_coordinator_update()
 
     async def _control_heating(self):
-        """The Smart Logic with Pilot Support."""
-
-        # --- SAFETY CHECK: If the last update failed (Timeout), DO NOT ACT ---
+        """The Smart Logic."""
+        
+        # Safety Check
         if not self.coordinator.last_update_success:
-            _LOGGER.warning("Connection lost to fireplace. Thermostat holding state.")
             return
 
+        # --- MANUAL MODE FIX ---
+        # If the Thermostat is OFF, we do NOTHING.
+        # We do not check the flame. We do not auto-switch modes.
+        # This allows the user to control the Flame Slider manually 
+        # without the Thermostat interfering.
+        if self._attr_hvac_mode == HVACMode.OFF:
+            return 
+
+        # --- HEAT MODE LOGIC ---
+        # Only run this if the Thermostat is explicitly ON.
         current_temp = self.current_temperature
         
-        # 1. System Set to OFF
-        if self._attr_hvac_mode == HVACMode.OFF:
-            
-            # --- NEW: AUTO-DETECT MANUAL USAGE ---
-            # If the user moved the slider manually (Flame > 0) while we were OFF,
-            # we automatically switch the Thermostat to HEAT so we don't fight them.
-            if self._dataservice.is_on and self._dataservice.get_flame_height() > 0:
-                _LOGGER.info("Manual flame detected (Level %s). Auto-switching Thermostat to HEAT.", self._dataservice.get_flame_height())
-                self._attr_hvac_mode = HVACMode.HEAT
-                self.async_write_ha_state()
-                # We return immediately so we don't accidentally shut it down this cycle
-                return 
-
-            # Standard Logic: If User wants Pilot, drop to Pilot. Else, Shutdown.
-            if self._dataservice.is_on:
-                if self._dataservice.keep_pilot_on:
-                     if self._dataservice.get_flame_height() > 0:
-                         await self._dataservice.async_set_flame_height(0)
-                else:
-                     await self._dataservice.async_guard_flame_off()
-            return
-
-        # 2. System Set to HEAT
         if self._attr_hvac_mode == HVACMode.HEAT:
-            # TOO HOT -> Stop Heating (Drop to Pilot OR Shutdown)
+            # TOO HOT -> Stop Heating
             if current_temp >= (self._target_temp + self._hysteresis):
                 if self._dataservice.is_on and self._dataservice.get_flame_height() > 0:
-                    _LOGGER.info("Target reached.")
-                    
+                    _LOGGER.info("Thermostat: Target reached.")
                     if self._dataservice.keep_pilot_on:
-                        _LOGGER.info("Dropping to Pilot (Switch is ON).")
                         await self._dataservice.async_set_flame_height(0)
                     else:
-                        _LOGGER.info("Shutting down (Switch is OFF).")
                         await self._dataservice.async_guard_flame_off()
 
             # TOO COLD -> Start Heating
             elif current_temp <= (self._target_temp - self._hysteresis):
-                # If we are Off OR just in Pilot mode -> Boost it!
                 if not self._dataservice.is_on or self._dataservice.get_flame_height() == 0:
-                    _LOGGER.info("Too cold. Boosting flame.")
+                    _LOGGER.info("Thermostat: Too cold. Boosting flame.")
                     await self._dataservice.async_ignite_fireplace()
