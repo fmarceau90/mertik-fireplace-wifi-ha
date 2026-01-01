@@ -20,6 +20,10 @@ class MertikLightEntity(CoordinatorEntity, LightEntity):
         self._attr_supported_color_modes = {ColorMode.BRIGHTNESS}
 
     @property
+    def device_info(self):
+        return self._dataservice.device_info
+
+    @property
     def is_on(self):
         return self._dataservice.is_light_on
 

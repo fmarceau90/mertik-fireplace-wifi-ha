@@ -33,6 +33,10 @@ class MertikAmbientTemperatureSensorEntity(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = entry_id + "-AmbientTemperature"
 
     @property
+    def device_info(self):
+        return self._dataservice.device_info
+
+    @property
     def native_value(self):
         return self._dataservice.ambient_temperature
 
@@ -47,6 +51,10 @@ class MertikModeSensorEntity(CoordinatorEntity, SensorEntity):
         self._attr_name = name + " Operating Mode"
         self._attr_unique_id = entry_id + "-OperatingMode"
         self._attr_icon = "mdi:information-outline"
+
+    @property
+    def device_info(self):
+        return self._dataservice.device_info
         
     @property
     def native_value(self):

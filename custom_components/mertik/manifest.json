@@ -1,9 +1,9 @@
 {
-  "codeowners": ["@djerik"],
+  "codeowners": ["@clarifai-fmarceau"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/djerik/mertik-ha",
-  "issue_tracker": "https://github.com/djerik/mertik-ha/issues",
+  "documentation": "https://github.com/fmarceau90/mertik-fireplace-wifi-ha",
+  "issue_tracker": "https://github.com/fmarceau90/mertik-fireplace-wifi-ha/issues",
   "domain": "mertik",
   "name": "Mertik Maxitrol",
   "version": "0.1.0",

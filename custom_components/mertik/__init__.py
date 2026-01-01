@@ -22,7 +22,10 @@ async def async_setup_entry(
         
     # 2. Init API and Coordinator
     mertik = Mertik(host)
-    coordinator = MertikDataCoordinator(hass, mertik)
+    device_name = entry.data.get("name", "Mertik Fireplace")
+    
+    # PASS entry_id AND device_name HERE
+    coordinator = MertikDataCoordinator(hass, mertik, entry.entry_id, device_name)
 
     # 3. First Refresh (Get initial data)
     await coordinator.async_config_entry_first_refresh()

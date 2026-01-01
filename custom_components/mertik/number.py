@@ -25,6 +25,10 @@ class MertikFlameHeightEntity(CoordinatorEntity, NumberEntity):
         self._attr_native_step = 1
 
     @property
+    def device_info(self):
+        return self._dataservice.device_info
+
+    @property
     def native_value(self) -> float:
         # Convert internal index (0-based) to UI value (1-based)
         return self._dataservice.get_flame_height() + 1

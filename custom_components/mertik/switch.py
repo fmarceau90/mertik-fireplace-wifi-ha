@@ -36,6 +36,10 @@ class MertikOnOffSwitchEntity(CoordinatorEntity, SwitchEntity):
         self._attr_unique_id = entry_id + "-OnOff"
 
     @property
+    def device_info(self):
+        return self._dataservice.device_info
+
+    @property
     def is_on(self):
         """Return true if the device is on."""
         return bool(self._dataservice.is_on)
@@ -57,6 +61,10 @@ class MertikAuxOnOffSwitchEntity(CoordinatorEntity, SwitchEntity):
         self._dataservice = dataservice
         self._attr_name = name
         self._attr_unique_id = entry_id + "-AuxOnOff"
+
+    @property
+    def device_info(self):
+        return self._dataservice.device_info
 
     @property
     def is_on(self):
@@ -81,6 +89,10 @@ class MertikEcoSwitchEntity(CoordinatorEntity, SwitchEntity):
         self._attr_name = name
         self._attr_unique_id = entry_id + "-EcoMode"
         self._attr_icon = "mdi:leaf"
+
+    @property
+    def device_info(self):
+        return self._dataservice.device_info
 
     @property
     def is_on(self):

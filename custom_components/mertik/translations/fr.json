@@ -4,7 +4,7 @@
       "user": {
         "data": {
           "name": "Donner un nom au foyer",
-          "host": "Adresse IP du controleur du foyer"
+          "host": "Adresse IP du contrôleur du foyer"
         },
         "description": "Choisir un appareil.",
         "title": "Appareil"

@@ -8,7 +8,7 @@ _LOGGER = logging.getLogger(__name__)
 class MertikDataCoordinator(DataUpdateCoordinator):
     """Mertik custom coordinator."""
 
-    def __init__(self, hass, mertik):
+    def __init__(self, hass, mertik, entry_id, device_name):
         """Initialize my coordinator."""
         super().__init__(
             hass,
@@ -18,6 +18,18 @@ class MertikDataCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=15),
         )
         self.mertik = mertik
+        self.entry_id = entry_id
+        self.device_name = device_name
+
+    @property
+    def device_info(self):
+        """Return device registry information for this entity."""
+        return {
+            "identifiers": {(DOMAIN, self.entry_id)},
+            "name": self.device_name,
+            "manufacturer": "Mertik Maxitrol",
+            "model": "Fireplace WiFi",
+        }
 
     async def _async_update_data(self):
         """Fetch data from API endpoint."""
