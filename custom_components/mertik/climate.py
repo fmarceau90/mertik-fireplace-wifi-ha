@@ -27,7 +27,7 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         
         self._target_temp = 21.0
         self._attr_hvac_mode = HVACMode.OFF 
-        self._hysteresis = 0.5
+        self._hysteresis = 0.5 # Used for shutdown threshold only now
 
     @property
     def device_info(self):
@@ -91,37 +91,58 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         super()._handle_coordinator_update()
 
     async def _control_heating(self):
-        """The Smart Logic."""
+        """The Smart Proportional Logic."""
         
         if not self.coordinator.last_update_success:
             return
 
-        # Manual Mode Check
+        # 1. Manual Mode Check (If OFF, do nothing)
         if self._attr_hvac_mode == HVACMode.OFF:
             return 
 
         current_temp = self.current_temperature
         
+        # 2. HEAT MODE LOGIC
         if self._attr_hvac_mode == HVACMode.HEAT:
-            # TOO HOT -> Stop Heating
-            if current_temp >= (self._target_temp + self._hysteresis):
+            
+            # Calculate the Gap (Error)
+            delta = self._target_temp - current_temp
+            
+            # --- SCENARIO A: TOO HOT (Shutdown) ---
+            # If we are hotter than target + hysteresis (0.5), shut down.
+            if delta <= -0.5:
                 if self._dataservice.is_on and self._dataservice.get_flame_height() > 0:
-                    _LOGGER.info("Thermostat: Target reached.")
+                    _LOGGER.info("Thermostat: Target reached (Overheated).")
                     if self._dataservice.keep_pilot_on:
                         await self._dataservice.async_set_flame_height(0)
                     else:
                         await self._dataservice.async_guard_flame_off()
-
-            # TOO COLD -> Start Heating
-            elif current_temp <= (self._target_temp - self._hysteresis):
+            
+            # --- SCENARIO B: HEATING NEEDED ---
+            elif delta > 0:
                 
-                # CASE 1: Dead Off -> Ignite
+                # Step 1: Ignite if completely dead
                 if not self._dataservice.is_on:
-                    _LOGGER.info("Thermostat: Too cold. Igniting from OFF.")
+                    _LOGGER.info("Thermostat: Too cold. Igniting.")
                     await self._dataservice.async_ignite_fireplace()
+                    return # Wait for next cycle to set height
                 
-                # CASE 2: Pilot is On (Level 0) -> Ramp Up
-                elif self._dataservice.get_flame_height() == 0:
-                     _LOGGER.info("Thermostat: Too cold. Pilot is on. Ramping up flame to Max.")
-                     # We set it to 12 (Max) to heat up the room quickly
-                     await self._dataservice.async_set_flame_height(12)
+                # Step 2: Calculate Proportional Flame Height
+                # Logic: 2.0 degrees difference = Max Flame (12)
+                # Ratio = 6 steps per 1 degree C.
+                
+                target_height = int(delta * 6)
+                
+                # Clamp boundaries (Min 1, Max 12)
+                if target_height > 12: target_height = 12
+                if target_height < 1: target_height = 1 # Keep a small flame if delta is tiny (e.g. 0.1)
+                
+                current_height = self._dataservice.get_flame_height()
+                
+                # Step 3: Apply Change (Only if different)
+                if current_height != target_height:
+                    _LOGGER.info(f"Thermostat: Proportional Adjust. Delta={delta:.1f}°C -> Flame {target_height}")
+                    await self._dataservice.async_set_flame_height(target_height)
+                
+                # (Optional) If we are sitting at Pilot (0) and need heat, the logic above 
+                # naturally handles it: 0 != target_height, so it ramps up immediately.

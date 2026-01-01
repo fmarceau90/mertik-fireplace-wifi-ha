@@ -8,18 +8,15 @@ class Mertik:
     def __init__(self, ip, port=2000):
         self.ip = ip
         self.port = port
-        
-        # Traffic Lock
         self._lock = asyncio.Lock()
         
-        # State variables
-        self.on = False # Main Burner Status
+        self.on = False 
         self.mode = None 
         self.flameHeight = 0
         self._aux_on = False
         self._shutting_down = False
         self._igniting = False
-        self._guard_flame_on = False # Pilot Status
+        self._guard_flame_on = False 
         self._light_on = False
         self._light_brightness = 0
         self._ambient_temperature = 0.0
@@ -27,8 +24,6 @@ class Mertik:
     # --- Properties ---
     @property
     def is_on(self) -> bool:
-        # FIX: Device is "Active" if Main Burner OR Pilot is on.
-        # This prevents HA from thinking it's OFF when sitting at Pilot.
         return self.on or self._guard_flame_on
 
     @property
@@ -172,16 +167,16 @@ class Mertik:
 
                     except (OSError, asyncio.TimeoutError, ConnectionError) as e:
                         last_error = e
-                        _LOGGER.warning(f"Attempt {attempt} failed: {repr(e)}", exc_info=True)
+                        # CHANGED: Removed exc_info=True to keep logs clean
+                        _LOGGER.warning(f"Attempt {attempt} failed: {repr(e)}")
                         if writer:
                             try:
                                 writer.close()
                                 await writer.wait_closed()
                             except Exception: pass
                         if attempt < MAX_RETRIES: await asyncio.sleep(RETRY_DELAY)
-                        else: _LOGGER.error(f"Unreachable: {repr(last_error)}", exc_info=True)
+                        else: _LOGGER.error(f"Unreachable: {repr(last_error)}")
             finally:
-                # TRAFFIC CONTROL: Force 1s pause between commands
                 await asyncio.sleep(1.0) 
 
     def _process_status(self, statusStr):
@@ -190,7 +185,7 @@ class Mertik:
             flameHeightRaw = int("0x" + statusStr[14:16], 0)
             if flameHeightRaw <= 123:
                 self.flameHeight = 0
-                self.on = False # Main Burner is Off
+                self.on = False 
             else:
                 self.flameHeight = round(((flameHeightRaw - 128) / 128) * 12) + 1
                 self.on = True
@@ -198,10 +193,10 @@ class Mertik:
             # 2. Mode
             self.mode = statusStr[24:25]
 
-            # 3. Bits (Pilot/Guard Flame is at Index 8)
+            # 3. Bits
             statusBits = statusStr[16:20]
             self._shutting_down = self._from_bit_status(statusBits, 7)
-            self._guard_flame_on = self._from_bit_status(statusBits, 8) # <--- Pilot
+            self._guard_flame_on = self._from_bit_status(statusBits, 8) 
             self._igniting = self._from_bit_status(statusBits, 11)
             self._aux_on = self._from_bit_status(statusBits, 12)
             self._light_on = self._from_bit_status(statusBits, 13)
