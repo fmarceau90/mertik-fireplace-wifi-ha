@@ -75,32 +75,37 @@ class MertikDataCoordinator(DataUpdateCoordinator):
     # --- Async Actions ---
     
     async def async_toggle_pilot(self, enable: bool):
-        """Dedicated Pilot Switch Action with IGNITION DELAY."""
-        # 1. Update the Memory immediately
+        """Dedicated Pilot Switch Action (Preference Only if Active)."""
         self.keep_pilot_on = enable
         
         if enable:
-            # --- TURN ON LOGIC ---
+            # --- USER TURNED SWITCH ON ---
             if not self.mertik.is_on:
-                _LOGGER.info("Pilot Switch ON: Sending Ignite Signal.")
+                # Case 1: Fire is OFF. Start it and go to Pilot.
+                _LOGGER.info("Fire is OFF. Ignite -> Wait -> Pilot.")
                 await self.mertik.async_ignite_fireplace()
                 
                 _LOGGER.info("Waiting 25s for hardware ignition cycle...")
                 await asyncio.sleep(25)
                 
-            _LOGGER.info("Dropping flame to Pilot (Level 0).")
-            await self.mertik.async_set_flame_height(0) 
+                await self.mertik.async_set_flame_height(0)
+                
+            else:
+                # Case 2: Fire is ALREADY ON (Heating or Pilot).
+                # We just update the 'keep_pilot_on' flag (already done above).
+                # We do NOT change the flame height.
+                _LOGGER.info("Fire is already ON. Updating Pilot Preference to TRUE. Maintaining current flame.")
             
         else:
-            # --- TURN OFF LOGIC (UPDATED) ---
-            # If the fire is currently HEATING (Flame Height > 0), 
-            # we do NOT want to kill the fire. We just want to unset the 'keep pilot' flag.
+            # --- USER TURNED SWITCH OFF ---
             if self.mertik.get_flame_height() > 0:
-                _LOGGER.info("Pilot Switch set to OFF. Fire is active (Heating), so we keep it burning. Pilot preference updated to False.")
-                # Do nothing physically. The 'self.keep_pilot_on = False' above handles the logic for later.
+                # Case 3: Fire is HEATING. 
+                # Just update the preference. Do not kill the fire.
+                _LOGGER.info("Fire is HEATING. Updating Pilot Preference to FALSE. Maintaining current flame.")
             else:
-                # If we are just sitting at Pilot (Height 0) or Off, we shut down.
-                _LOGGER.info("Pilot Switch set to OFF. Fire is idle/pilot. Shutting down.")
+                # Case 4: Fire is at PILOT (Level 0) or OFF.
+                # User says "Off", so we shut down.
+                _LOGGER.info("Fire is at PILOT/OFF. Shutting down.")
                 await self.mertik.async_guard_flame_off()
         
         await self.async_request_refresh()
