@@ -35,7 +35,6 @@ class MertikDataCoordinator(DataUpdateCoordinator):
             await self.mertik.async_refresh_status()
 
             # --- SYNC LOGIC ---
-            # 1. Pilot Auto-Detect:
             # If the device reports ON (Main OR Pilot) and Flame Height is 0...
             # Then we are in Pilot Mode. Sync the switch to True.
             if self.mertik.is_on and self.mertik.get_flame_height() == 0:
@@ -77,9 +76,11 @@ class MertikDataCoordinator(DataUpdateCoordinator):
     
     async def async_toggle_pilot(self, enable: bool):
         """Dedicated Pilot Switch Action with IGNITION DELAY."""
+        # 1. Update the Memory immediately
         self.keep_pilot_on = enable
         
         if enable:
+            # --- TURN ON LOGIC ---
             if not self.mertik.is_on:
                 _LOGGER.info("Pilot Switch ON: Sending Ignite Signal.")
                 await self.mertik.async_ignite_fireplace()
@@ -91,9 +92,17 @@ class MertikDataCoordinator(DataUpdateCoordinator):
             await self.mertik.async_set_flame_height(0) 
             
         else:
-            await self.mertik.async_guard_flame_off()
+            # --- TURN OFF LOGIC (UPDATED) ---
+            # If the fire is currently HEATING (Flame Height > 0), 
+            # we do NOT want to kill the fire. We just want to unset the 'keep pilot' flag.
+            if self.mertik.get_flame_height() > 0:
+                _LOGGER.info("Pilot Switch set to OFF. Fire is active (Heating), so we keep it burning. Pilot preference updated to False.")
+                # Do nothing physically. The 'self.keep_pilot_on = False' above handles the logic for later.
+            else:
+                # If we are just sitting at Pilot (Height 0) or Off, we shut down.
+                _LOGGER.info("Pilot Switch set to OFF. Fire is idle/pilot. Shutting down.")
+                await self.mertik.async_guard_flame_off()
         
-        # Major state change -> Request immediate update
         await self.async_request_refresh()
 
     async def async_ignite_fireplace(self):
@@ -110,7 +119,6 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         await self.async_request_refresh()
 
     # --- GENTLE MODE COMMANDS ---
-    # We REMOVED await self.async_request_refresh() to prevent collisions.
     
     async def async_aux_on(self):
         await self.mertik.async_aux_on()
