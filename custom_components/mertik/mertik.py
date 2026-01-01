@@ -9,18 +9,17 @@ class Mertik:
         self.ip = ip
         self.port = port
         
-        # --- TRAFFIC CONTROL ---
-        # This lock ensures we never send 2 commands at once
+        # Traffic Lock
         self._lock = asyncio.Lock()
         
-        # Initialize state variables
-        self.on = False
+        # State variables
+        self.on = False # Main Burner Status
         self.mode = None 
         self.flameHeight = 0
         self._aux_on = False
         self._shutting_down = False
         self._igniting = False
-        self._guard_flame_on = False
+        self._guard_flame_on = False # Pilot Status
         self._light_on = False
         self._light_brightness = 0
         self._ambient_temperature = 0.0
@@ -28,7 +27,9 @@ class Mertik:
     # --- Properties ---
     @property
     def is_on(self) -> bool:
-        return self.on
+        # FIX: Device is "Active" if Main Burner OR Pilot is on.
+        # This prevents HA from thinking it's OFF when sitting at Pilot.
+        return self.on or self._guard_flame_on
 
     @property
     def is_aux_on(self) -> bool:
@@ -68,18 +69,14 @@ class Mertik:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.bind(("", UDP_PORT))
-            
-            # Send broadcast
             MESSAGE = "000100f6"
             hexstring = bytearray.fromhex(MESSAGE)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             sock.sendto(hexstring, ("<broadcast>", 30718))
 
-            # Receive reply
             sock.settimeout(3.0)
             data, addr = sock.recvfrom(1024)
-            device = {"address": addr}
-            return device
+            return {"address": addr}
         except (socket.timeout, OSError):
             return {}
         finally:
@@ -120,146 +117,102 @@ class Mertik:
 
     async def async_set_light_brightness(self, brightness) -> None:
         normalized_brightness = (brightness - 1) / 254 * 100
-
         if normalized_brightness == 100:
             device_code = "4642"
         elif normalized_brightness == 0:
             device_code = "3633"
         else:
             l = 36 + round(normalized_brightness / 100 * 8)
-            if l >= 40:
-                l += 1
+            if l >= 40: l += 1
             device_code = f"{l:02d}{l:02d}"
 
         msg = f"33304645{device_code}03"
         await self._async_send_command(msg)
 
     async def async_set_flame_height(self, flame_height) -> None:
-        steps = [
-            "3030", "3830", "3842", "3937", 
-            "4132", "4145", "4239", "4335", 
-            "4430", "4443", "4537", "4633", "4646"
-        ]
-        
+        steps = ["3030", "3830", "3842", "3937", "4132", "4145", "4239", "4335", "4430", "4443", "4537", "4633", "4646"]
         if 0 <= flame_height < len(steps):
             l = steps[flame_height]
             msg = "3136" + l + "03"
             await self._async_send_command(msg)
-            # Trigger immediate refresh to update status
             await self.async_refresh_status()
 
     # --- Core Communication ---
     async def _async_send_command(self, msg):
-        """Async command sender with Retry Logic, Traffic Lock, AND Cool Down."""
-        
-        # 1. ACQUIRE LOCK (Wait for line to clear)
         async with self._lock:
-        
             MAX_RETRIES = 3
             RETRY_DELAY = 2.0
             
-            if not isinstance(msg, str):
-                msg = str(msg)
-                
+            if not isinstance(msg, str): msg = str(msg)
             send_command_prefix = "0233303330333033303830"
             full_payload = bytearray.fromhex(send_command_prefix + msg)
-            
             process_status_prefixes = ("303030300003", "030300000003")
-
             last_error = None
 
             try:
                 for attempt in range(1, MAX_RETRIES + 1):
                     writer = None
                     try:
-                        # Connect
                         future = asyncio.open_connection(self.ip, self.port)
                         reader, writer = await asyncio.wait_for(future, timeout=10.0)
                         
-                        # Send
                         writer.write(full_payload)
                         await writer.drain()
 
-                        # Read
                         data = await asyncio.wait_for(reader.read(1024), timeout=10.0)
+                        if not data: raise ConnectionError("Empty response")
 
-                        if not data:
-                            raise ConnectionError("Empty response")
-
-                        # Process
                         temp_data = data.decode("ascii", errors='ignore')
-                        if len(temp_data) > 0:
-                            temp_data = temp_data[1:]
-                        
+                        if len(temp_data) > 0: temp_data = temp_data[1:]
                         temp_data = temp_data.replace('\r', ';')
 
                         if temp_data.startswith(process_status_prefixes):
                             self._process_status(temp_data)
-                        
-                        # SUCCESS! Return immediately
                         return 
 
                     except (OSError, asyncio.TimeoutError, ConnectionError) as e:
                         last_error = e
                         _LOGGER.warning(f"Attempt {attempt} failed: {repr(e)}", exc_info=True)
-                        
                         if writer:
                             try:
                                 writer.close()
                                 await writer.wait_closed()
-                            except Exception:
-                                pass
-
-                        if attempt < MAX_RETRIES:
-                            await asyncio.sleep(RETRY_DELAY)
-                        else:
-                            _LOGGER.error(f"Unreachable: {repr(last_error)}", exc_info=True)
-
+                            except Exception: pass
+                        if attempt < MAX_RETRIES: await asyncio.sleep(RETRY_DELAY)
+                        else: _LOGGER.error(f"Unreachable: {repr(last_error)}", exc_info=True)
             finally:
-                # --- MANDATORY COOL DOWN ---
-                # Force a 1.0s pause BEFORE releasing the lock.
-                # This ensures HA cannot slam the device with a 'Refresh' 
-                # immediately after a command finishes.
+                # TRAFFIC CONTROL: Force 1s pause between commands
                 await asyncio.sleep(1.0) 
 
     def _process_status(self, statusStr):
-        """Parses the raw status string."""
         try:
-            # 1. Parse Flame Height
-            tempSub = statusStr[14:16]
-            tempSub = "0x" + tempSub
-            flameHeightRaw = int(tempSub, 0)
-
+            # 1. Flame Height
+            flameHeightRaw = int("0x" + statusStr[14:16], 0)
             if flameHeightRaw <= 123:
                 self.flameHeight = 0
-                self.on = False
+                self.on = False # Main Burner is Off
             else:
                 self.flameHeight = round(((flameHeightRaw - 128) / 128) * 12) + 1
                 self.on = True
 
-            # 2. Parse Mode
+            # 2. Mode
             self.mode = statusStr[24:25]
 
-            # 3. Parse Bits
+            # 3. Bits (Pilot/Guard Flame is at Index 8)
             statusBits = statusStr[16:20]
             self._shutting_down = self._from_bit_status(statusBits, 7)
-            self._guard_flame_on = self._from_bit_status(statusBits, 8)
+            self._guard_flame_on = self._from_bit_status(statusBits, 8) # <--- Pilot
             self._igniting = self._from_bit_status(statusBits, 11)
             self._aux_on = self._from_bit_status(statusBits, 12)
             self._light_on = self._from_bit_status(statusBits, 13)
 
-            # 4. Parse Light Brightness
-            self._light_brightness = round(
-                ((int("0x" + statusStr[20:22], 0) - 100) / 151) * 255
-            )
-            if self._light_brightness < 0 or not self._light_on:
-                self._light_brightness = 0
+            # 4. Light
+            self._light_brightness = round(((int("0x" + statusStr[20:22], 0) - 100) / 151) * 255)
+            if self._light_brightness < 0 or not self._light_on: self._light_brightness = 0
 
-            # 5. Parse Temp (With Sanity Check)
+            # 5. Temp
             raw_temp = int("0x" + statusStr[30:32], 0) / 10
-            
-            if 1.0 < raw_temp < 50.0:
-                self._ambient_temperature = raw_temp
+            if 1.0 < raw_temp < 50.0: self._ambient_temperature = raw_temp
             
         except Exception as e:
             _LOGGER.error(f"Error parsing status: {e}")

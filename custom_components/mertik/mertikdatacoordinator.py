@@ -19,8 +19,6 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         self.mertik = mertik
         self.entry_id = entry_id
         self.device_name = device_name
-        
-        # Memory for Pilot Switch: Default False
         self.keep_pilot_on = False 
 
     @property
@@ -36,14 +34,10 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         try:
             await self.mertik.async_refresh_status()
 
-            # --- SYNC LOGIC (UPDATED FOR STABILITY) ---
-            # 1. REMOVED "Auto-Off" Logic:
-            # We do NOT automatically set keep_pilot_on = False if the fire reports Off.
-            # This prevents the switch from turning itself off during connection glitches.
-            # The only way to turn it off is for the user to toggle the switch.
-
-            # 2. Auto-Detect Pilot:
-            # If the fire IS physically on Pilot, we ensure the variable matches.
+            # --- SYNC LOGIC ---
+            # 1. Pilot Auto-Detect:
+            # If the device reports ON (Main OR Pilot) and Flame Height is 0...
+            # Then we are in Pilot Mode. Sync the switch to True.
             if self.mertik.is_on and self.mertik.get_flame_height() == 0:
                 self.keep_pilot_on = True
             
@@ -90,9 +84,6 @@ class MertikDataCoordinator(DataUpdateCoordinator):
                 _LOGGER.info("Pilot Switch ON: Sending Ignite Signal.")
                 await self.mertik.async_ignite_fireplace()
                 
-                # --- CRITICAL: WAIT FOR IGNITION ---
-                # Hardware cannot receive commands while sparking.
-                # Wait 25s for main burner to light up before dropping to Pilot.
                 _LOGGER.info("Waiting 25s for hardware ignition cycle...")
                 await asyncio.sleep(25)
                 
@@ -100,9 +91,9 @@ class MertikDataCoordinator(DataUpdateCoordinator):
             await self.mertik.async_set_flame_height(0) 
             
         else:
-            # Turn OFF completely
             await self.mertik.async_guard_flame_off()
         
+        # Major state change -> Request immediate update
         await self.async_request_refresh()
 
     async def async_ignite_fireplace(self):
@@ -111,30 +102,27 @@ class MertikDataCoordinator(DataUpdateCoordinator):
 
     async def async_guard_flame_off(self):
         await self.mertik.async_guard_flame_off()
-        # Only hard shutdown resets the pilot memory
         self.keep_pilot_on = False 
-        await self.async_request_refresh()
-
-    async def async_aux_on(self):
-        await self.mertik.async_aux_on()
-        await self.async_request_refresh()
-
-    async def async_aux_off(self):
-        await self.mertik.async_aux_off()
         await self.async_request_refresh()
 
     async def async_set_flame_height(self, flame_height) -> None:
         await self.mertik.async_set_flame_height(flame_height)
         await self.async_request_refresh()
 
+    # --- GENTLE MODE COMMANDS ---
+    # We REMOVED await self.async_request_refresh() to prevent collisions.
+    
+    async def async_aux_on(self):
+        await self.mertik.async_aux_on()
+
+    async def async_aux_off(self):
+        await self.mertik.async_aux_off()
+
     async def async_light_on(self):
         await self.mertik.async_light_on()
-        await self.async_request_refresh()
 
     async def async_light_off(self):
         await self.mertik.async_light_off()
-        await self.async_request_refresh()
 
     async def async_set_light_brightness(self, brightness) -> None:
         await self.mertik.async_set_light_brightness(brightness)
-        await self.async_request_refresh()

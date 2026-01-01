@@ -85,7 +85,18 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         
         # 1. System Set to OFF
         if self._attr_hvac_mode == HVACMode.OFF:
-            # If User wants Pilot, drop to Pilot. Else, Shutdown.
+            
+            # --- NEW: AUTO-DETECT MANUAL USAGE ---
+            # If the user moved the slider manually (Flame > 0) while we were OFF,
+            # we automatically switch the Thermostat to HEAT so we don't fight them.
+            if self._dataservice.is_on and self._dataservice.get_flame_height() > 0:
+                _LOGGER.info("Manual flame detected (Level %s). Auto-switching Thermostat to HEAT.", self._dataservice.get_flame_height())
+                self._attr_hvac_mode = HVACMode.HEAT
+                self.async_write_ha_state()
+                # We return immediately so we don't accidentally shut it down this cycle
+                return 
+
+            # Standard Logic: If User wants Pilot, drop to Pilot. Else, Shutdown.
             if self._dataservice.is_on:
                 if self._dataservice.keep_pilot_on:
                      if self._dataservice.get_flame_height() > 0:
@@ -113,8 +124,4 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
                 # If we are Off OR just in Pilot mode -> Boost it!
                 if not self._dataservice.is_on or self._dataservice.get_flame_height() == 0:
                     _LOGGER.info("Too cold. Boosting flame.")
-                    # Ignite / Set to a decent starting height (e.g. Index 1 or higher)
-                    # For Mertik, ignite usually goes to High or Last? 
-                    # Let's just Ignite (defaults) or Set to Max? 
-                    # Usually ignite is enough to start the cycle.
                     await self._dataservice.async_ignite_fireplace()
