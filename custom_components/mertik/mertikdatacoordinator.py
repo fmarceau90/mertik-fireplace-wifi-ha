@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from datetime import timedelta
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from .const import DOMAIN
@@ -9,7 +10,6 @@ class MertikDataCoordinator(DataUpdateCoordinator):
     """Mertik custom coordinator."""
 
     def __init__(self, hass, mertik, entry_id, device_name):
-        """Initialize my coordinator."""
         super().__init__(
             hass,
             _LOGGER,
@@ -19,14 +19,10 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         self.mertik = mertik
         self.entry_id = entry_id
         self.device_name = device_name
-        
-        # Memory for the Pilot Switch
-        # If True, the system will revert to Pilot instead of turning off
         self.keep_pilot_on = False 
 
     @property
     def device_info(self):
-        """Return device registry information for this entity."""
         return {
             "identifiers": {(DOMAIN, self.entry_id)},
             "name": self.device_name,
@@ -35,18 +31,12 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         }
 
     async def _async_update_data(self):
-        """Fetch data from API endpoint."""
         try:
-            # 1. Get fresh data
             await self.mertik.async_refresh_status()
 
-            # 2. SYNC LOGIC (The Fix)
-            # If the fire is completely OFF/Igniting, reset our switch
+            # Sync Logic
             if not self.mertik.is_on and not self.mertik.is_igniting:
                 self.keep_pilot_on = False
-            
-            # If the fire is ON and sitting at Pilot (Flame Height 0), 
-            # we MUST tell the system "The User wants Pilot" (Set True).
             elif self.mertik.is_on and self.mertik.get_flame_height() == 0:
                 self.keep_pilot_on = True
             
@@ -54,7 +44,7 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         except Exception as err:
             raise UpdateFailed(f"Error communicating with API: {err}")
 
-    # --- Properties (Read from internal state) ---
+    # --- Properties ---
     @property
     def is_on(self) -> bool:
         return self.mertik.is_on or self.mertik.is_igniting
@@ -82,16 +72,27 @@ class MertikDataCoordinator(DataUpdateCoordinator):
     def get_flame_height(self) -> int:
         return self.mertik.get_flame_height()
 
-    # --- Async Actions (Write to device) ---
+    # --- Async Actions ---
     
     async def async_toggle_pilot(self, enable: bool):
-        """Dedicated Pilot Switch Action."""
+        """Dedicated Pilot Switch Action with IGNITION DELAY."""
         self.keep_pilot_on = enable
+        
         if enable:
-            # If not already on, ignite. Then set to lowest height (Pilot)
             if not self.mertik.is_on:
+                _LOGGER.info("Pilot Switch ON: Sending Ignite Signal.")
                 await self.mertik.async_ignite_fireplace()
-            await self.mertik.async_set_flame_height(0) # Index 0 = Pilot
+                
+                # --- CRITICAL FIX: WAIT FOR IGNITION ---
+                # The hardware CANNOT receive commands while sparking/moving motor.
+                # We must wait ~25 seconds for the main burner to light up 
+                # before we can tell it to drop back down to Pilot.
+                _LOGGER.info("Waiting 25s for hardware ignition cycle to complete...")
+                await asyncio.sleep(25)
+                
+            _LOGGER.info("Dropping flame to Pilot (Level 0).")
+            await self.mertik.async_set_flame_height(0) 
+            
         else:
             # Turn OFF completely
             await self.mertik.async_guard_flame_off()
@@ -104,7 +105,7 @@ class MertikDataCoordinator(DataUpdateCoordinator):
 
     async def async_guard_flame_off(self):
         await self.mertik.async_guard_flame_off()
-        self.keep_pilot_on = False # Hard Off resets the pilot switch
+        self.keep_pilot_on = False 
         await self.async_request_refresh()
 
     async def async_aux_on(self):
