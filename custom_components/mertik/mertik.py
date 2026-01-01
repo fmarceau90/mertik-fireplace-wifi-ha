@@ -192,7 +192,12 @@ class Mertik:
 
             except (OSError, asyncio.TimeoutError, ConnectionError) as e:
                 last_error = e
-                _LOGGER.warning(f"Attempt {attempt}/{MAX_RETRIES} failed: {e}")
+                
+                # --- CHANGED: Use repr(e) for detail and exc_info=True for Stack Trace ---
+                _LOGGER.warning(
+                    f"Attempt {attempt}/{MAX_RETRIES} failed: {repr(e)}", 
+                    exc_info=True
+                )
                 
                 if writer:
                     try:
@@ -204,7 +209,11 @@ class Mertik:
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(RETRY_DELAY)
                 else:
-                    _LOGGER.error(f"Mertik unreachable at {self.ip} - Last Error: {last_error}")
+                    # Also improve the final error log
+                    _LOGGER.error(
+                        f"Mertik unreachable at {self.ip} - Last Error: {repr(last_error)}",
+                        exc_info=True
+                    )
 
             finally:
                 if writer:

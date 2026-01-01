@@ -45,6 +45,26 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         except Exception as err:
             raise UpdateFailed(f"Error communicating with API: {err}")
 
+async def _async_update_data(self):
+        try:
+            await self.mertik.async_refresh_status()
+
+            if not self.mertik.is_on and not self.mertik.is_igniting:
+                self.keep_pilot_on = False
+            
+            # If the fire is ON and sitting at Pilot (Flame Height 0), 
+            # we MUST tell the system "The User wants Pilot" (Set True).
+            # This prevents the Thermostat from killing it.
+            elif self.mertik.is_on and self.mertik.get_flame_height() == 0:
+                self.keep_pilot_on = True
+            
+            # (Optional) If the fire is ON and Main Burner is up (Height > 0),
+            # we don't force keep_pilot_on to True or False. We let the
+            # Thermostat decide based on temperature.
+            return self.mertik
+        except Exception as err:
+            raise UpdateFailed(f"Error communicating with API: {err}")
+
     # --- Properties ---
     @property
     def is_on(self) -> bool:
