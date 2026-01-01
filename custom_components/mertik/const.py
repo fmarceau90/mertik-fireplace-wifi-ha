@@ -28,6 +28,9 @@ CMD_AUX_OFF       = "32303030030a"
 CMD_LIGHT_ON      = "3330303103"
 CMD_LIGHT_OFF     = "3330303003"
 
+CMD_FAN_ON        = "3430303103"  # Fan On
+CMD_FAN_OFF       = "3430303003"  # Fan Off
+
 CMD_ECO_MODE      = "4233303103"  # Wave pattern
 CMD_MANUAL_MODE   = "423003"      # Static flame
 

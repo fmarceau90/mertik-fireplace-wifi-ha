@@ -16,6 +16,8 @@ from .const import (
     CMD_AUX_OFF,
     CMD_LIGHT_ON,
     CMD_LIGHT_OFF,
+    CMD_FAN_ON,
+    CMD_FAN_OFF,
     CMD_ECO_MODE,
     CMD_MANUAL_MODE,
     CMD_FLAME_PREFIX,
@@ -44,6 +46,11 @@ class Mertik:
         self._light_on = False
         self._light_brightness = 0
         self._ambient_temperature = 0.0
+        
+        # New Feature States
+        self._fan_on = False
+        self._low_battery = False
+        self._rf_signal_level = 0
         
         # Glitch Counter
         self._temp_glitch_count = 0
@@ -127,6 +134,12 @@ class Mertik:
     async def async_light_off(self):
         await self._async_send_command(CMD_LIGHT_OFF)
         
+    async def async_fan_on(self):
+        await self._async_send_command(CMD_FAN_ON)
+
+    async def async_fan_off(self):
+        await self._async_send_command(CMD_FAN_OFF)
+
     async def async_set_eco(self):
         await self._async_send_command(CMD_ECO_MODE)
 
@@ -160,9 +173,7 @@ class Mertik:
             RETRY_DELAY = 2.0 
             
             if not isinstance(msg, str): msg = str(msg)
-            # Use the Constant Prefix
             full_payload = bytearray.fromhex(CMD_PREFIX + msg)
-            # Use the Constant Response Prefixes
             process_status_prefixes = (RESPONSE_PREFIX_1, RESPONSE_PREFIX_2)
             last_error = None
 
@@ -225,7 +236,18 @@ class Mertik:
             self._igniting = self._from_bit_status(statusBits, 11)
             raw_aux_on = self._from_bit_status(statusBits, 12)
             self._light_on = self._from_bit_status(statusBits, 13)
+            
+            # --- NEW SENSORS PARSING ---
+            self._low_battery = self._from_bit_status(statusBits, 9) 
+            self._fan_on = self._from_bit_status(statusBits, 14)      
+            
+            # RF Signal Strength (Experimental: Byte 6)
+            try:
+                self._rf_signal_level = int("0x" + statusStr[12:14], 0)
+            except ValueError:
+                self._rf_signal_level = 0
 
+            # Logic Check: If Pilot (0), Force Aux Off
             if self.flameHeight == 0:
                 self._aux_on = False
             else:
@@ -238,7 +260,7 @@ class Mertik:
             # 5. Temp
             raw_temp = int("0x" + statusStr[30:32], 0) / 10
             
-            # Initial Load
+            # Initialization
             if self._ambient_temperature == 0.0:
                  if 0.0 < raw_temp < 60.0:
                      _LOGGER.info(f"System initialized with temperature: {raw_temp}")
