@@ -8,20 +8,15 @@ from .mertikdatacoordinator import MertikDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-# We added "fan" and "binary_sensor" to this list:
-PLATFORMS = ["climate", "number", "switch", "fan", "binary_sensor"]
+PLATFORMS = ["climate", "number", "switch", "fan", "binary_sensor", "light", "sensor"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Mertik from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
-    # 1. Initiate connection to the physical device
-    # We use the IP address saved in the config flow
     device_ip = entry.data["host"]
     mertik_device = Mertik(device_ip)
 
-    # 2. Create the Data Coordinator (The "Brain")
-    # This handles the polling loop and data distribution
     coordinator = MertikDataCoordinator(
         hass, 
         mertik_device, 
@@ -29,13 +24,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.data["name"]
     )
 
-    # 3. Initial Fetch (Get data before loading entities)
     await coordinator.async_config_entry_first_refresh()
 
-    # 4. Store the coordinator so platforms can access it
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # 5. Load the Platforms (Climate, Switch, Number, Fan, Sensors)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
