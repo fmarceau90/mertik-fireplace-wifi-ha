@@ -223,7 +223,10 @@ class Mertik:
                 self.flameHeight = 0
                 self.on = False 
             else:
-                self.flameHeight = round(((flameHeightRaw - 128) / 128) * 12) + 1
+                # FIX: Clamp to 12. 
+                # Mathematical edge case: round(12.9) -> 13, which is invalid.
+                calc_height = round(((flameHeightRaw - 128) / 128) * 12) + 1
+                self.flameHeight = min(12, calc_height)
                 self.on = True
 
             # 2. Mode
@@ -241,13 +244,11 @@ class Mertik:
             self._low_battery = self._from_bit_status(statusBits, 9) 
             self._fan_on = self._from_bit_status(statusBits, 14)      
             
-            # RF Signal Strength (Experimental: Byte 6)
             try:
                 self._rf_signal_level = int("0x" + statusStr[12:14], 0)
             except ValueError:
                 self._rf_signal_level = 0
 
-            # Logic Check: If Pilot (0), Force Aux Off
             if self.flameHeight == 0:
                 self._aux_on = False
             else:
@@ -260,7 +261,6 @@ class Mertik:
             # 5. Temp
             raw_temp = int("0x" + statusStr[30:32], 0) / 10
             
-            # Initialization
             if self._ambient_temperature == 0.0:
                  if 0.0 < raw_temp < 60.0:
                      _LOGGER.info(f"System initialized with temperature: {raw_temp}")
