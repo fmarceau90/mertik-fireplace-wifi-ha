@@ -1,6 +1,6 @@
 import logging
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import UnitOfTemperature, SIGNAL_STRENGTH_DECIBELS_MILLIWATT
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 
@@ -12,7 +12,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities([
         MertikTemperatureSensor(dataservice, entry.entry_id, device_name),
         MertikModeSensor(dataservice, entry.entry_id, device_name),
-        MertikStatusSensor(dataservice, entry.entry_id, device_name), # <--- NEW
+        MertikStatusSensor(dataservice, entry.entry_id, device_name),
+        MertikSignalSensor(dataservice, entry.entry_id, device_name), # <--- NEW
     ])
 
 # 1. AMBIENT TEMP
@@ -34,7 +35,7 @@ class MertikTemperatureSensor(CoordinatorEntity, SensorEntity):
     def device_info(self):
         return self._dataservice.device_info
 
-# 2. OPERATING MODE (0, 1, 2)
+# 2. OPERATING MODE
 class MertikModeSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice)
@@ -51,7 +52,7 @@ class MertikModeSensor(CoordinatorEntity, SensorEntity):
     def device_info(self):
         return self._dataservice.device_info
 
-# 3. DETAILED STATUS (The Diagnostic Array)
+# 3. DETAILED STATUS
 class MertikStatusSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice)
@@ -62,36 +63,20 @@ class MertikStatusSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
-        """Return a human-readable summary of the highest priority state."""
         m = self._dataservice.mertik
-        
-        # Priority 1: Safety Lockouts
         if m._guard_flame_on:
-            if m._low_battery:
-                return "Error: Low Battery Lockout"
+            if m._low_battery: return "Error: Low Battery Lockout"
             return "Error: Safety Lockout (Guard)"
-        
-        # Priority 2: Transitions
-        if m.is_igniting:
-            return "Igniting..."
-        if m.is_shutting_down:
-            return "Shutting Down..."
-            
-        # Priority 3: Warnings
-        if m._low_battery:
-            return "Warning: Low Battery"
-            
-        # Priority 4: Normal Operation
+        if m.is_igniting: return "Igniting..."
+        if m.is_shutting_down: return "Shutting Down..."
+        if m._low_battery: return "Warning: Low Battery"
         if m.flameHeight == 0:
-            if m.is_on: # Should not happen often (On but 0 height usually means Pilot)
-                 return "Pilot / Standby"
+            if m.is_on: return "Pilot / Standby"
             return "Standby (Off)"
-        
         return f"Heating (Level {m.flameHeight})"
 
     @property
     def extra_state_attributes(self):
-        """Expose the raw flags for debugging."""
         m = self._dataservice.mertik
         return {
             "is_igniting": m.is_igniting,
@@ -103,6 +88,25 @@ class MertikStatusSensor(CoordinatorEntity, SensorEntity):
             "raw_mode_id": m.mode,
             "thermostat_active": self._dataservice.is_thermostat_active
         }
+
+    @property
+    def device_info(self):
+        return self._dataservice.device_info
+
+# 4. RF SIGNAL STRENGTH (NEW)
+class MertikSignalSensor(CoordinatorEntity, SensorEntity):
+    def __init__(self, dataservice, entry_id, name):
+        super().__init__(dataservice)
+        self._dataservice = dataservice
+        self._attr_name = name + " RF Signal Strength"
+        self._attr_unique_id = entry_id + "-signal"
+        self._attr_icon = "mdi:wifi"
+        # The value is 0-255 raw, not dBm, so we don't use the Signal device class
+        # to avoid confusion with actual dBm math.
+
+    @property
+    def native_value(self):
+        return self._dataservice.mertik._rf_signal_level
 
     @property
     def device_info(self):
