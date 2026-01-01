@@ -10,6 +10,7 @@ class Mertik:
         self.port = port
         self._lock = asyncio.Lock()
         
+        # State variables
         self.on = False 
         self.mode = None 
         self.flameHeight = 0
@@ -20,6 +21,10 @@ class Mertik:
         self._light_on = False
         self._light_brightness = 0
         self._ambient_temperature = 0.0
+        
+        # --- NEW: Glitch Counter ---
+        # Used to debounce bad sensor readings (e.g. 50F/10C default on boot)
+        self._temp_glitch_count = 0
 
     # --- Properties ---
     @property
@@ -167,7 +172,7 @@ class Mertik:
 
                     except (OSError, asyncio.TimeoutError, ConnectionError) as e:
                         last_error = e
-                        # CHANGED: Removed exc_info=True to keep logs clean
+                        # Warning only, no stack trace
                         _LOGGER.warning(f"Attempt {attempt} failed: {repr(e)}")
                         if writer:
                             try:
@@ -205,9 +210,30 @@ class Mertik:
             self._light_brightness = round(((int("0x" + statusStr[20:22], 0) - 100) / 151) * 255)
             if self._light_brightness < 0 or not self._light_on: self._light_brightness = 0
 
-            # 5. Temp
+            # 5. Temp (WITH DEBOUNCER)
             raw_temp = int("0x" + statusStr[30:32], 0) / 10
-            if 1.0 < raw_temp < 50.0: self._ambient_temperature = raw_temp
+            
+            if 1.0 < raw_temp < 50.0:
+                # Calculate absolute difference
+                diff = abs(raw_temp - self._ambient_temperature)
+                
+                # If we have a previous value, and the jump is > 5 degrees
+                if self._ambient_temperature > 0 and diff > 5.0:
+                    self._temp_glitch_count += 1
+                    
+                    if self._temp_glitch_count <= 3:
+                        # Ignore it for now (it's likely a transient glitch)
+                        _LOGGER.warning(f"Ignored temp glitch: {raw_temp} (Prev: {self._ambient_temperature}). Count: {self._temp_glitch_count}")
+                        return 
+                    else:
+                        # If we see it 4 times in a row, accept it (It's real)
+                        _LOGGER.warning(f"Accepting large temp change to {raw_temp} after verification.")
+                        self._temp_glitch_count = 0
+                        self._ambient_temperature = raw_temp
+                else:
+                    # Valid small change, reset counter and accept
+                    self._temp_glitch_count = 0
+                    self._ambient_temperature = raw_temp
             
         except Exception as e:
             _LOGGER.error(f"Error parsing status: {e}")
