@@ -207,7 +207,6 @@ class Mertik:
             raw_aux_on = self._from_bit_status(statusBits, 12)
             self._light_on = self._from_bit_status(statusBits, 13)
 
-            # Ghostbuster: If flame is 0, Aux must be Off
             if self.flameHeight == 0:
                 self._aux_on = False
             else:
@@ -217,30 +216,26 @@ class Mertik:
             self._light_brightness = round(((int("0x" + statusStr[20:22], 0) - 100) / 151) * 255)
             if self._light_brightness < 0 or not self._light_on: self._light_brightness = 0
 
-            # 5. Temp (WITH "ZOMBIE DATA" FILTER)
+            # 5. Temp
             raw_temp = int("0x" + statusStr[30:32], 0) / 10
             
-            # --- FILTER START ---
-            
-            # Rule 1: The "Zombie 10C" Check.
-            # If the temp is EXACTLY the 50F/10C hardware default, and we don't 
-            # already trust that it's this cold, we DROP it.
-            # This protects us from the "Reboot Glitch" that sets a false floor.
-            if 9.9 <= raw_temp <= 10.3:
-                 if self._ambient_temperature == 0 or self._ambient_temperature > 12:
-                     _LOGGER.debug(f"Dropping suspicious 'Zombie' temperature: {raw_temp}")
+            # Initialization Check: If we have 0.0, ACCEPT ANYTHING immediately.
+            # This ensures we don't get stuck in a "Waiting for perfect data" loop.
+            if self._ambient_temperature == 0.0:
+                 if 0.0 < raw_temp < 60.0:
+                     _LOGGER.info(f"System initialized with temperature: {raw_temp}")
+                     self._ambient_temperature = raw_temp
                      return
 
-            # Rule 2: The standard "Wild Jump" Filter
+            # Standard Glitch Filter
             if 1.0 < raw_temp < 50.0:
                 diff = abs(raw_temp - self._ambient_temperature)
                 
-                # If we have a valid previous temp, and new temp jumps > 5.0
-                if self._ambient_temperature > 0 and diff > 5.0:
+                # If diff is HUGE (> 5 degrees)
+                if diff > 5.0:
                     self._temp_glitch_count += 1
+                    # We wait for 3 consecutive readings (approx 45s) before accepting a huge jump
                     if self._temp_glitch_count <= 3:
-                        # Changed to DEBUG so it doesn't spam warnings for known behavior
-                        _LOGGER.debug(f"Ignored temp glitch: {raw_temp} (Prev: {self._ambient_temperature}). Count: {self._temp_glitch_count}")
                         return 
                     else:
                         _LOGGER.warning(f"Accepting large temp change to {raw_temp} after verification.")
