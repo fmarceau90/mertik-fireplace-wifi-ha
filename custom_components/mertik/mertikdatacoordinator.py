@@ -14,7 +14,6 @@ class MertikDataCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name="Mertik",
-            # Reverted to 15s to prevent hardware timeouts
             update_interval=timedelta(seconds=15),
         )
         self.mertik = mertik
@@ -80,7 +79,7 @@ class MertikDataCoordinator(DataUpdateCoordinator):
                 _LOGGER.info("Pilot Switch ON: Sending Ignite Signal.")
                 await self.mertik.async_ignite_fireplace()
                 
-                # CHANGED: Increased from 25s to 40s to ensure motor is finished moving
+                # Wait 40s to ensure motor is finished moving
                 _LOGGER.info("Waiting 40s for hardware ignition cycle...")
                 await asyncio.sleep(40)
                 
@@ -101,16 +100,22 @@ class MertikDataCoordinator(DataUpdateCoordinator):
 
     async def async_ignite_fireplace(self):
         await self.mertik.async_ignite_fireplace()
-        await self.async_request_refresh()
+        # No immediate refresh here either, ignition takes time
 
     async def async_guard_flame_off(self):
         await self.mertik.async_guard_flame_off()
         self.keep_pilot_on = False 
-        await self.async_request_refresh()
 
     async def async_set_flame_height(self, flame_height) -> None:
+        # 1. OPTIMISTIC UPDATE: Update UI immediately
+        self.mertik.flameHeight = flame_height
+        self.async_update_listeners()
+        
+        # 2. SEND COMMAND: Move the motor
         await self.mertik.async_set_flame_height(flame_height)
-        await self.async_request_refresh()
+        
+        # 3. DO NOT REFRESH. 
+        # The motor is moving. We let it finish in peace.
 
     # --- GENTLE MODE COMMANDS (With Optimistic Updates) ---
     
@@ -119,8 +124,7 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         self.async_update_listeners()
         await self.mertik.async_aux_on()
 
-    async def async_aux_off(self):
-        self.mertik._aux_on = False
+    async def async_aux_off(self.mertik._aux_on = False):
         self.async_update_listeners()
         await self.mertik.async_aux_off()
 

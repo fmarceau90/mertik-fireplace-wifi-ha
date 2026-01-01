@@ -22,7 +22,7 @@ class Mertik:
         self._light_brightness = 0
         self._ambient_temperature = 0.0
         
-        # Glitch Counter (Debouncer)
+        # Glitch Counter
         self._temp_glitch_count = 0
 
     # --- Properties ---
@@ -134,13 +134,14 @@ class Mertik:
             l = steps[flame_height]
             msg = "3136" + l + "03"
             await self._async_send_command(msg)
-            await self.async_refresh_status()
+            # OPTIMIZATION: Removed immediate status refresh.
+            # We trust the Optimized Coordinator to handle the UI.
 
     # --- Core Communication ---
     async def _async_send_command(self, msg):
         async with self._lock:
             MAX_RETRIES = 3
-            RETRY_DELAY = 2.0 # Base delay
+            RETRY_DELAY = 2.0 
             
             if not isinstance(msg, str): msg = str(msg)
             send_command_prefix = "0233303330333033303830"
@@ -171,7 +172,6 @@ class Mertik:
 
                     except (OSError, asyncio.TimeoutError, ConnectionError) as e:
                         last_error = e
-                        # Warning only
                         _LOGGER.warning(f"Attempt {attempt} failed: {repr(e)}")
                         if writer:
                             try:
@@ -180,17 +180,15 @@ class Mertik:
                             except Exception: pass
                         
                         if attempt < MAX_RETRIES:
-                            # --- EXPONENTIAL BACKOFF FIX ---
-                            # Attempt 1: Sleeps 2s
-                            # Attempt 2: Sleeps 4s
-                            # Attempt 3: Fails
+                            # Exponential Backoff
                             sleep_time = RETRY_DELAY * attempt
-                            _LOGGER.debug(f"Backing off for {sleep_time} seconds...")
                             await asyncio.sleep(sleep_time)
                         else:
                             _LOGGER.error(f"Unreachable: {repr(last_error)}")
             finally:
-                await asyncio.sleep(1.0) 
+                # OPTIMIZATION: Reduced from 1.0s to 0.25s
+                # Just enough to prevent packet collision, but fast enough to feel instant.
+                await asyncio.sleep(0.25) 
 
     def _process_status(self, statusStr):
         try:
