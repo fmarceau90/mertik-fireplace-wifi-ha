@@ -34,9 +34,6 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         try:
             await self.mertik.async_refresh_status()
 
-            # --- SYNC LOGIC ---
-            # If the device reports ON (Main OR Pilot) and Flame Height is 0...
-            # Then we are in Pilot Mode. Sync the switch to True.
             if self.mertik.is_on and self.mertik.get_flame_height() == 0:
                 self.keep_pilot_on = True
             
@@ -75,14 +72,11 @@ class MertikDataCoordinator(DataUpdateCoordinator):
     # --- Async Actions ---
     
     async def async_toggle_pilot(self, enable: bool):
-        """Dedicated Pilot Switch Action (Preference Only if Active)."""
         self.keep_pilot_on = enable
         
         if enable:
-            # --- USER TURNED SWITCH ON ---
             if not self.mertik.is_on:
-                # Case 1: Fire is OFF. Start it and go to Pilot.
-                _LOGGER.info("Fire is OFF. Ignite -> Wait -> Pilot.")
+                _LOGGER.info("Pilot Switch ON: Sending Ignite Signal.")
                 await self.mertik.async_ignite_fireplace()
                 
                 _LOGGER.info("Waiting 25s for hardware ignition cycle...")
@@ -91,20 +85,12 @@ class MertikDataCoordinator(DataUpdateCoordinator):
                 await self.mertik.async_set_flame_height(0)
                 
             else:
-                # Case 2: Fire is ALREADY ON (Heating or Pilot).
-                # We just update the 'keep_pilot_on' flag (already done above).
-                # We do NOT change the flame height.
-                _LOGGER.info("Fire is already ON. Updating Pilot Preference to TRUE. Maintaining current flame.")
+                _LOGGER.info("Fire is already ON. Updating Pilot Preference to TRUE.")
             
         else:
-            # --- USER TURNED SWITCH OFF ---
             if self.mertik.get_flame_height() > 0:
-                # Case 3: Fire is HEATING. 
-                # Just update the preference. Do not kill the fire.
-                _LOGGER.info("Fire is HEATING. Updating Pilot Preference to FALSE. Maintaining current flame.")
+                _LOGGER.info("Fire is HEATING. Updating Pilot Preference to FALSE.")
             else:
-                # Case 4: Fire is at PILOT (Level 0) or OFF.
-                # User says "Off", so we shut down.
                 _LOGGER.info("Fire is at PILOT/OFF. Shutting down.")
                 await self.mertik.async_guard_flame_off()
         
@@ -123,19 +109,32 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         await self.mertik.async_set_flame_height(flame_height)
         await self.async_request_refresh()
 
-    # --- GENTLE MODE COMMANDS ---
+    # --- GENTLE MODE COMMANDS (With Optimistic Updates) ---
     
     async def async_aux_on(self):
+        # 1. Optimistic Update (Make UI snappy)
+        self.mertik._aux_on = True 
+        self.async_update_listeners()
+        
+        # 2. Send Command
         await self.mertik.async_aux_on()
 
     async def async_aux_off(self):
+        self.mertik._aux_on = False
+        self.async_update_listeners()
         await self.mertik.async_aux_off()
 
     async def async_light_on(self):
+        self.mertik._light_on = True
+        self.async_update_listeners()
         await self.mertik.async_light_on()
 
     async def async_light_off(self):
+        self.mertik._light_on = False
+        self.async_update_listeners()
         await self.mertik.async_light_off()
 
     async def async_set_light_brightness(self, brightness) -> None:
+        self.mertik._light_brightness = brightness
+        self.async_update_listeners()
         await self.mertik.async_set_light_brightness(brightness)

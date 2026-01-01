@@ -60,25 +60,31 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         """Handle User switching the Mode."""
         self._attr_hvac_mode = hvac_mode
         
-        # If User explicitly clicks OFF, we shut everything down.
         if hvac_mode == HVACMode.OFF:
             if self._dataservice.keep_pilot_on:
-                 # If pilot pref is active, drop to Pilot (don't kill it)
                  if self._dataservice.get_flame_height() > 0:
                      await self._dataservice.async_set_flame_height(0)
             else:
-                 # Full shutdown
                  await self._dataservice.async_guard_flame_off()
         
-        # If User clicks HEAT, we run the logic check immediately
         elif hvac_mode == HVACMode.HEAT:
             await self._control_heating()
             
         self.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs):
+        """Set new target temperature."""
         if ATTR_TEMPERATURE in kwargs:
             self._target_temp = kwargs[ATTR_TEMPERATURE]
+            
+            # --- NEW: AUTO-ON LOGIC ---
+            # If User raises the temp above current room temp, 
+            # we assume they want HEAT, even if it was OFF.
+            if self._attr_hvac_mode == HVACMode.OFF:
+                if self._target_temp > (self.current_temperature + self._hysteresis):
+                    _LOGGER.info("User raised target temp. Auto-switching to HEAT mode.")
+                    self._attr_hvac_mode = HVACMode.HEAT
+
             await self._control_heating()
             self.async_write_ha_state()
 
@@ -89,20 +95,13 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
     async def _control_heating(self):
         """The Smart Logic."""
         
-        # Safety Check
         if not self.coordinator.last_update_success:
             return
 
-        # --- MANUAL MODE FIX ---
-        # If the Thermostat is OFF, we do NOTHING.
-        # We do not check the flame. We do not auto-switch modes.
-        # This allows the user to control the Flame Slider manually 
-        # without the Thermostat interfering.
+        # Manual Mode Check
         if self._attr_hvac_mode == HVACMode.OFF:
             return 
 
-        # --- HEAT MODE LOGIC ---
-        # Only run this if the Thermostat is explicitly ON.
         current_temp = self.current_temperature
         
         if self._attr_hvac_mode == HVACMode.HEAT:
