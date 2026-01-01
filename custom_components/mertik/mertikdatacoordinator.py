@@ -14,7 +14,8 @@ class MertikDataCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name="Mertik",
-            update_interval=timedelta(seconds=15),
+            # IMPROVED: Reduced to 10s for snappier UI response
+            update_interval=timedelta(seconds=10),
         )
         self.mertik = mertik
         self.entry_id = entry_id
@@ -112,11 +113,9 @@ class MertikDataCoordinator(DataUpdateCoordinator):
     # --- GENTLE MODE COMMANDS (With Optimistic Updates) ---
     
     async def async_aux_on(self):
-        # 1. Optimistic Update (Make UI snappy)
+        # Optimistic Update
         self.mertik._aux_on = True 
         self.async_update_listeners()
-        
-        # 2. Send Command
         await self.mertik.async_aux_on()
 
     async def async_aux_off(self):

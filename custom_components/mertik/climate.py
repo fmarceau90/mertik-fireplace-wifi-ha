@@ -77,9 +77,7 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
         if ATTR_TEMPERATURE in kwargs:
             self._target_temp = kwargs[ATTR_TEMPERATURE]
             
-            # --- NEW: AUTO-ON LOGIC ---
-            # If User raises the temp above current room temp, 
-            # we assume they want HEAT, even if it was OFF.
+            # AUTO-ON LOGIC
             if self._attr_hvac_mode == HVACMode.OFF:
                 if self._target_temp > (self.current_temperature + self._hysteresis):
                     _LOGGER.info("User raised target temp. Auto-switching to HEAT mode.")
@@ -116,6 +114,14 @@ class MertikClimate(CoordinatorEntity, ClimateEntity):
 
             # TOO COLD -> Start Heating
             elif current_temp <= (self._target_temp - self._hysteresis):
-                if not self._dataservice.is_on or self._dataservice.get_flame_height() == 0:
-                    _LOGGER.info("Thermostat: Too cold. Boosting flame.")
+                
+                # CASE 1: Dead Off -> Ignite
+                if not self._dataservice.is_on:
+                    _LOGGER.info("Thermostat: Too cold. Igniting from OFF.")
                     await self._dataservice.async_ignite_fireplace()
+                
+                # CASE 2: Pilot is On (Level 0) -> Ramp Up
+                elif self._dataservice.get_flame_height() == 0:
+                     _LOGGER.info("Thermostat: Too cold. Pilot is on. Ramping up flame to Max.")
+                     # We set it to 12 (Max) to heat up the room quickly
+                     await self._dataservice.async_set_flame_height(12)
