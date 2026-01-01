@@ -26,12 +26,8 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
         self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
         self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
         
-        # Defaults
         self._target_temp = 21.0
         self._attr_hvac_mode = HVACMode.OFF 
-        
-        # HYSTERESIS SETTINGS
-        self._hysteresis_start = 0.5 
 
     @property
     def device_info(self):
@@ -41,11 +37,8 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
         """Run when entity about to be added."""
         await super().async_added_to_hass()
         
-        # Restore State
         last_state = await self.async_get_last_state()
         if last_state:
-            _LOGGER.info(f"Restoring thermostat state: {last_state.state}")
-            
             if last_state.state in [HVACMode.HEAT, HVACMode.OFF]:
                 self._attr_hvac_mode = last_state.state
             
@@ -58,7 +51,6 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
         self._update_lock_status()
 
     def _update_lock_status(self):
-        """Tell the coordinator if we are active."""
         is_active = (self._attr_hvac_mode == HVACMode.HEAT)
         self._dataservice.is_thermostat_active = is_active
 
@@ -106,7 +98,9 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
             self._target_temp = kwargs[ATTR_TEMPERATURE]
             
             if self._attr_hvac_mode == HVACMode.OFF:
-                if self._target_temp > (self.current_temperature + self._hysteresis_start):
+                # Use dynamic deadzone for auto-start logic too
+                hysteresis = self._dataservice.thermostat_deadzone
+                if self._target_temp > (self.current_temperature + hysteresis):
                     self._attr_hvac_mode = HVACMode.HEAT
                     self._update_lock_status()
 
@@ -127,9 +121,12 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
         current_temp = self.current_temperature
         delta = self._target_temp - current_temp
         
+        # READ LIVE CONFIG
+        hysteresis = self._dataservice.thermostat_deadzone
+        
         if self._attr_hvac_mode == HVACMode.HEAT:
             
-            # 1. TARGET REACHED (Stop Heating)
+            # 1. STOP HEATING (Target Reached)
             if delta <= 0:
                 if self._dataservice.get_flame_height() > 0:
                     if self._dataservice.keep_pilot_on:
@@ -140,21 +137,17 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
                         else:
                              await self._dataservice.async_set_flame_height(0)
 
-            # 2. START HEATING (Start Heating)
-            elif delta > self._hysteresis_start:
+            # 2. START HEATING (Uses Configured Deadzone)
+            elif delta > hysteresis:
                 
                 if not self._dataservice.is_on:
                     await self._dataservice.async_ignite_fireplace()
                     return 
                 
-                # Proportional Heating Calculation
                 raw_height = int(delta * 6)
-                
-                # --- THE CLAMP FIX ---
-                # Ensure we never ask for more than 12 or less than 1
                 target_height = max(1, min(12, raw_height))
                 
                 current_height = self._dataservice.get_flame_height()
                 if current_height != target_height:
-                    _LOGGER.info(f"Heating required (Delta {delta:.1f}). Setting flame to {target_height}.")
+                    _LOGGER.info(f"Heating required (Delta {delta:.1f} > {hysteresis}). Setting flame to {target_height}.")
                     await self._dataservice.async_set_flame_height(target_height)

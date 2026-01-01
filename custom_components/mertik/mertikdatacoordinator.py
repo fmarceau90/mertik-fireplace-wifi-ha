@@ -21,10 +21,12 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         self.device_name = device_name
         self.keep_pilot_on = False 
         
-        # NEW: The "Lock" Flag
-        # True = Thermostat is running (Manual Slider Disabled)
-        # False = Thermostat is OFF (Manual Slider Enabled)
+        # Thermostat State Flags
         self.is_thermostat_active = False
+        
+        # NEW: Configurable Deadzone (Default 0.5)
+        # The Number entity will update this, the Climate entity will read this.
+        self.thermostat_deadzone = 0.5
 
     @property
     def device_info(self):
@@ -105,35 +107,29 @@ class MertikDataCoordinator(DataUpdateCoordinator):
         await self.mertik.async_ignite_fireplace()
 
     async def async_guard_flame_off(self):
-        # 1. Hardware Kill
         await self.mertik.async_guard_flame_off()
         
-        # 2. Local State Reset (Master Kill)
+        # Local State Reset
         self.keep_pilot_on = False
         self.mertik.on = False
         self.mertik._light_on = False
         self.mertik._aux_on = False
         self.mertik.flameHeight = 0
         
-        # 3. UI Update
         self.async_update_listeners()
 
     async def async_set_flame_height(self, flame_height) -> None:
-        # 1. LOGIC: If Pilot (0), force Aux OFF.
         if flame_height == 0 and self.mertik.is_aux_on:
             _LOGGER.info("Flame set to 0 (Pilot). Auto-turning OFF Secondary Burner.")
             self.mertik._aux_on = False 
             await self.mertik.async_aux_off() 
             await asyncio.sleep(0.5)
 
-        # 2. OPTIMISTIC UPDATE
         self.mertik.flameHeight = flame_height
         self.async_update_listeners()
-        
-        # 3. SEND COMMAND
         await self.mertik.async_set_flame_height(flame_height)
 
-    # --- GENTLE MODE COMMANDS (With Optimistic Updates) ---
+    # --- GENTLE MODE COMMANDS ---
     
     async def async_aux_on(self):
         self.mertik._aux_on = True 
