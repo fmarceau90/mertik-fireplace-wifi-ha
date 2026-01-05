@@ -1,6 +1,6 @@
 import logging
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.const import EntityCategory # <--- IMPORT ADDED
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 from .const import DOMAIN
@@ -27,8 +27,12 @@ class MertikSmartSyncSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         self._attr_name = name + " Smart Sync"
         self._attr_unique_id = entry_id + "-smart-sync"
         self._attr_icon = "mdi:sync-alert"
-        # FIX: Use the Enum object, not a string
         self._attr_entity_category = EntityCategory.CONFIG 
+
+    # FIX: This tells HA to group this entity under the Fireplace Device
+    @property
+    def device_info(self):
+        return self._dataservice.device_info
 
     async def async_added_to_hass(self):
         """Restore previous setting."""
@@ -81,11 +85,8 @@ class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
-        # 1. Manual Override
         if self._was_available and is_available:
             self._is_on_local = device_is_on
-
-        # 2. Recovery (Reboot)
         elif not self._was_available and is_available:
             if smart_sync:
                 _LOGGER.warning(f"{self.name} recovered. Enforcing HA State: {self._is_on_local}")
