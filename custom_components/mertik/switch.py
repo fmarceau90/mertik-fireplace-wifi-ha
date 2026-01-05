@@ -1,5 +1,6 @@
 import logging
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.const import EntityCategory # <--- IMPORT ADDED
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 from .const import DOMAIN
@@ -26,7 +27,8 @@ class MertikSmartSyncSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         self._attr_name = name + " Smart Sync"
         self._attr_unique_id = entry_id + "-smart-sync"
         self._attr_icon = "mdi:sync-alert"
-        self._attr_entity_category = "config" 
+        # FIX: Use the Enum object, not a string
+        self._attr_entity_category = EntityCategory.CONFIG 
 
     async def async_added_to_hass(self):
         """Restore previous setting."""
@@ -34,15 +36,12 @@ class MertikSmartSyncSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         last_state = await self.async_get_last_state()
         
         if last_state and last_state.state in ["on", "off"]:
-            # Restore state
             self._dataservice.smart_sync_enabled = (last_state.state == "on")
         else:
-            # Default to True
             self._dataservice.smart_sync_enabled = True
 
     @property
     def is_on(self):
-        # FIX: Safe access. Defaults to True if variable is missing.
         return getattr(self._dataservice, "smart_sync_enabled", True)
 
     async def async_turn_on(self, **kwargs):
@@ -80,10 +79,9 @@ class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         is_available = self.coordinator.last_update_success
         device_is_on = self._get_device_status()
         
-        # FIX: Safe access to the flag
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
-        # 1. Manual Override (User pressed remote)
+        # 1. Manual Override
         if self._was_available and is_available:
             self._is_on_local = device_is_on
 
@@ -91,7 +89,6 @@ class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         elif not self._was_available and is_available:
             if smart_sync:
                 _LOGGER.warning(f"{self.name} recovered. Enforcing HA State: {self._is_on_local}")
-                # We do NOT update local state; we keep HA's memory
             else:
                 _LOGGER.info(f"{self.name} recovered. Accepting device state: {device_is_on}")
                 self._is_on_local = device_is_on
