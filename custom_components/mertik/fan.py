@@ -18,7 +18,7 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         self._attr_name = name + " Fan"
         self._attr_unique_id = entry_id + "-fan"
         
-        # 1 = Set Speed/Percentage feature (Universal ID)
+        # 1 = Set Speed/Percentage feature
         self._attr_supported_features = (
             FanEntityFeature.TURN_ON 
             | FanEntityFeature.TURN_OFF 
@@ -54,7 +54,6 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
         if self._was_available and is_available:
-            # Optimistic Logic: If we are ON, ignore the 'Off' from cold sensor
             if self._is_on_local and not device_is_on:
                  pass 
             else:
@@ -128,7 +127,6 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
 
     async def _set_fan_hardware(self):
         try:
-            # FIX 1: Robust Math (1-100% -> Level 1-4)
             if self._percentage_local == 0:
                 level = 0
             else:
@@ -136,15 +134,18 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
             
             _LOGGER.debug(f"Setting Fan to Level {level} ({self._percentage_local}%)")
             
-            # FIX 2: THE DOUBLE TAP (Speed + Actuate)
             if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
-                # 1. Set the register (Might be silent)
-                await self._dataservice.mertik.async_set_fan_speed(level)
+                # 1. Update the internal speed register
+                await self._dataservice.mertik.async_set_fan_speed(int(level))
                 
-                # 2. Force Actuation (Guarantees BEEP)
+                # 2. FORCE THE PACKET
+                # The driver likely checks 'if self._fan_on: return' to save bandwidth.
+                # We lie to the driver and say it is OFF, so it is forced to send the ON packet.
+                # This packet carries the new speed + actuation command -> BEEP!
+                self._dataservice.mertik._fan_on = False 
+                
                 await self._dataservice.mertik.async_fan_on()
             else:
-                # Fallback for old drivers
                 await self._dataservice.mertik.async_fan_on()
                 
         except Exception as e:
