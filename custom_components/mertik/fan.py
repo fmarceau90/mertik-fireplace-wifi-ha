@@ -11,6 +11,10 @@ _LOGGER = logging.getLogger(__name__)
 # Mertik fans usually have 4 speeds
 SPEED_LIST = ["1", "2", "3", "4"]
 
+# Universal Constant for Speed Control
+# We use 1 (raw integer) to avoid "AttributeError: SET_PERCENTAGE" crashes on different HA versions.
+SUPPORT_SET_PERCENTAGE = 1 
+
 async def async_setup_entry(hass, entry, async_add_entities):
     dataservice = hass.data[DOMAIN].get(entry.entry_id)
     async_add_entities([MertikFan(dataservice, entry.entry_id, entry.data["name"])])
@@ -21,15 +25,17 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         self._dataservice = dataservice
         self._attr_name = name + " Fan"
         self._attr_unique_id = entry_id + "-fan"
-        # Enable Speed Control (Percentage)
+        
+        # FIX: Use raw integer math for features to be crash-proof
         self._attr_supported_features = (
             FanEntityFeature.TURN_ON 
             | FanEntityFeature.TURN_OFF 
-            | FanEntityFeature.SET_PERCENTAGE
+            | SUPPORT_SET_PERCENTAGE
         )
+        
         self._was_available = False
         self._is_on_local = False
-        self._percentage_local = 100  # Default to Max Speed (Level 4)
+        self._percentage_local = 100  # Default to Max Speed
 
     @property
     def device_info(self):
@@ -39,11 +45,9 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
         
-        # Restore On/Off
         if last_state and last_state.state in ["on", "off"]:
             self._is_on_local = (last_state.state == "on")
         
-        # Restore Speed (Percentage)
         if last_state and "percentage" in last_state.attributes:
              stored_p = last_state.attributes["percentage"]
              if stored_p is not None:
@@ -54,16 +58,13 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
 
     def _handle_coordinator_update(self) -> None:
         is_available = self.coordinator.last_update_success
-        # Assuming driver has _fan_speed (0-4) or similar. 
-        # Since we don't have the driver code, we rely on the generic 'fan_on' boolean for state
-        # but we will enforce our local percentage for control.
         device_is_on = getattr(self._dataservice.mertik, "_fan_on", False)
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
         if self._was_available and is_available:
-            # OPTIMISTIC LOGIC: Trust user input over cold sensor
+            # Optimistic Logic: If we are ON, ignore the 'Off' from cold sensor
             if self._is_on_local and not device_is_on:
-                 pass # Waiting for heat...
+                 pass 
             else:
                  self._is_on_local = device_is_on
 
@@ -107,10 +108,8 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
     async def async_turn_on(self, percentage=None, preset_mode=None, **kwargs):
         self._is_on_local = True
         
-        # If user selected a specific speed on the slider
         if percentage is not None:
             self._percentage_local = percentage
-        # If user just clicked "On" and we have no valid memory, Default to 100% (Level 4)
         elif self._percentage_local is None or self._percentage_local == 0:
             self._percentage_local = 100
 
@@ -126,7 +125,6 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
             _LOGGER.error(f"Failed to turn off fan: {e}")
 
     async def async_set_percentage(self, percentage: int) -> None:
-        """Set the speed percentage."""
         if percentage == 0:
             await self.async_turn_off()
             return
@@ -137,22 +135,18 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         await self._set_fan_hardware()
 
     async def _set_fan_hardware(self):
-        """Translate percentage to Level 1-4 and send."""
         try:
-            # Map 1-100% to 1-4
             if self._percentage_local == 0:
                 level = 0
             else:
                 level = math.ceil(percentage_to_ordered_list_item(SPEED_LIST, self._percentage_local))
             
-            _LOGGER.info(f"Setting Fan to Level {level} ({self._percentage_local}%)")
+            _LOGGER.debug(f"Setting Fan to Level {level} ({self._percentage_local}%)")
             
-            # Call the specific speed method on the driver
-            # Note: Assuming async_set_fan_speed exists. If not, we fall back to generic ON.
+            # Call driver safely
             if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
                 await self._dataservice.mertik.async_set_fan_speed(level)
             else:
-                # Fallback for generic driver
                 await self._dataservice.mertik.async_fan_on()
                 
         except Exception as e:

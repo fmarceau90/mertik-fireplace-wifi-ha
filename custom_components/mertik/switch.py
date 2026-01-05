@@ -30,26 +30,21 @@ class MertikSmartSyncSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         self._attr_entity_category = EntityCategory.CONFIG 
 
     @property
-    def device_info(self):
-        return self._dataservice.device_info
+    def device_info(self): return self._dataservice.device_info
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
-        
         if last_state and last_state.state in ["on", "off"]:
             self._dataservice.smart_sync_enabled = (last_state.state == "on")
         else:
             self._dataservice.smart_sync_enabled = True
 
     @property
-    def is_on(self):
-        return getattr(self._dataservice, "smart_sync_enabled", True)
-
+    def is_on(self): return getattr(self._dataservice, "smart_sync_enabled", True)
     async def async_turn_on(self, **kwargs):
         self._dataservice.smart_sync_enabled = True
         self.async_write_ha_state()
-
     async def async_turn_off(self, **kwargs):
         self._dataservice.smart_sync_enabled = False
         self.async_write_ha_state()
@@ -65,8 +60,7 @@ class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         self._is_on_local = False
 
     @property
-    def device_info(self):
-        return self._dataservice.device_info
+    def device_info(self): return self._dataservice.device_info
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
@@ -89,34 +83,26 @@ class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
             else:
                 _LOGGER.info(f"{self.name} recovered. Accepting device state: {device_is_on}")
                 self._is_on_local = device_is_on
-
         self._was_available = is_available
         self.async_write_ha_state()
-        
-        if smart_sync:
-            self.hass.async_create_task(self._sync_hardware())
+        if smart_sync: self.hass.async_create_task(self._sync_hardware())
 
     async def _sync_hardware(self):
         if not self.coordinator.last_update_success: return
         device_is_on = self._get_device_status()
-        if self._is_on_local and not device_is_on:
-            await self.async_turn_on_device()
-        elif not self._is_on_local and device_is_on:
-            await self.async_turn_off_device()
+        if self._is_on_local and not device_is_on: await self.async_turn_on_device()
+        elif not self._is_on_local and device_is_on: await self.async_turn_off_device()
 
     @property
     def is_on(self): return self._is_on_local
-
     async def async_turn_on(self, **kwargs):
         self._is_on_local = True
         await self.async_turn_on_device()
         self.async_write_ha_state()
-
     async def async_turn_off(self, **kwargs):
         self._is_on_local = False
         await self.async_turn_off_device()
         self.async_write_ha_state()
-
     def _get_device_status(self): return False
     async def async_turn_on_device(self): pass
     async def async_turn_off_device(self): pass
@@ -134,22 +120,18 @@ class MertikEcoSwitch(MertikBaseSwitch):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice, entry_id, name, "Eco Mode")
         self._attr_icon = "mdi:leaf"
-    def _get_device_status(self): return self._dataservice.mertik.mode == "2"
-
-    async def async_turn_on_device(self): 
-        # FIX: Robust check for active thermostat
-        is_locked = getattr(self._dataservice, "is_thermostat_active", False)
         
-        if is_locked:
-             _LOGGER.warning("BLOCKED: Cannot enable Eco Mode while Virtual Thermostat is active.")
-             self._is_on_local = False # Reset switch
-             self.async_write_ha_state()
-             return
+    # FIX: Grey out this switch if Thermostat is active!
+    @property
+    def available(self) -> bool:
+        # It is available IF (Coordinator is OK) AND (Thermostat is NOT active)
+        is_coord_ok = self.coordinator.last_update_success
+        is_locked = getattr(self._dataservice, "is_thermostat_active", False)
+        return is_coord_ok and not is_locked
 
-        await self._dataservice.mertik.async_set_eco()
-
-    async def async_turn_off_device(self): 
-        await self._dataservice.mertik.async_set_manual()
+    def _get_device_status(self): return self._dataservice.mertik.mode == "2"
+    async def async_turn_on_device(self): await self._dataservice.mertik.async_set_eco()
+    async def async_turn_off_device(self): await self._dataservice.mertik.async_set_manual()
 
 class MertikAuxSwitch(MertikBaseSwitch):
     def __init__(self, dataservice, entry_id, name):
