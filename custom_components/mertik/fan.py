@@ -8,6 +8,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# Define speeds as strings for the helper utility
 SPEED_LIST = ["1", "2", "3", "4"]
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -21,8 +22,7 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         self._attr_name = name + " Fan"
         self._attr_unique_id = entry_id + "-fan"
         
-        # FIX: Using raw integer '1' for Set Percentage/Speed to avoid AttributeErrors
-        # 1 = Set Speed/Percentage
+        # 1 = Set Speed/Percentage feature
         self._attr_supported_features = (
             FanEntityFeature.TURN_ON 
             | FanEntityFeature.TURN_OFF 
@@ -134,7 +134,9 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
             if self._percentage_local == 0:
                 level = 0
             else:
-                level = math.ceil(percentage_to_ordered_list_item(SPEED_LIST, self._percentage_local))
+                # FIX: Convert the string result ("4") to an int (4) before use
+                str_level = percentage_to_ordered_list_item(SPEED_LIST, self._percentage_local)
+                level = int(str_level)
             
             _LOGGER.debug(f"Setting Fan to Level {level} ({self._percentage_local}%)")
             
