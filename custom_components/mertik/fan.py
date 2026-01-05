@@ -34,7 +34,8 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
 
     def _handle_coordinator_update(self) -> None:
         is_available = self.coordinator.last_update_success
-        device_is_on = self._dataservice.mertik._fan_on
+        # Safely access the private variable on the driver
+        device_is_on = getattr(self._dataservice.mertik, "_fan_on", False)
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
         if self._was_available and is_available:
@@ -54,26 +55,34 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
 
     async def _sync_hardware(self):
         if not self.coordinator.last_update_success: return
-        device_is_on = self._dataservice.mertik._fan_on
+        # Safely access driver status
+        device_is_on = getattr(self._dataservice.mertik, "_fan_on", False)
         
-        # FIX: Point to .mertik driver
-        if self._is_on_local and not device_is_on:
-            await self._dataservice.mertik.async_fan_on()
-        elif not self._is_on_local and device_is_on:
-            await self._dataservice.mertik.async_fan_off()
+        try:
+            if self._is_on_local and not device_is_on:
+                await self._dataservice.mertik.async_fan_on()
+            elif not self._is_on_local and device_is_on:
+                await self._dataservice.mertik.async_fan_off()
+        except Exception as e:
+            _LOGGER.error(f"Error syncing fan hardware: {e}")
 
     @property
     def is_on(self):
         return self._is_on_local
 
+    # FIX: Explicitly handle arguments to prevent signature errors
     async def async_turn_on(self, percentage=None, preset_mode=None, **kwargs):
         self._is_on_local = True
-        # FIX: Point to .mertik driver
-        await self._dataservice.mertik.async_fan_on()
         self.async_write_ha_state()
+        try:
+            await self._dataservice.mertik.async_fan_on()
+        except Exception as e:
+            _LOGGER.error(f"Failed to turn on fan: {e}")
 
     async def async_turn_off(self, **kwargs):
         self._is_on_local = False
-        # FIX: Point to .mertik driver
-        await self._dataservice.mertik.async_fan_off()
         self.async_write_ha_state()
+        try:
+            await self._dataservice.mertik.async_fan_off()
+        except Exception as e:
+            _LOGGER.error(f"Failed to turn off fan: {e}")

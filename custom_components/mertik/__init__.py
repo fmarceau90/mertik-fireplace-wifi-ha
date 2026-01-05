@@ -24,8 +24,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.data["name"]
     )
     
-    # --- NEW: Initialize the Smart Sync Flag (Default to True) ---
+    # --- SHARED STATE INITIALIZATION ---
+    # We initialize these flags here so they exist for all platforms
     coordinator.smart_sync_enabled = True
+    coordinator.is_thermostat_active = False  # <--- CRITICAL FIX for Eco Mode
 
     await coordinator.async_config_entry_first_refresh()
 

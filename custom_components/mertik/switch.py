@@ -56,7 +56,6 @@ class MertikSmartSyncSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
 
 # --- BASE SWITCH ---
 class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
-    """Base class for Mertik switches with State Restoration."""
     def __init__(self, dataservice, entry_id, name, switch_type):
         super().__init__(dataservice)
         self._dataservice = dataservice
@@ -80,7 +79,6 @@ class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
     def _handle_coordinator_update(self):
         is_available = self.coordinator.last_update_success
         device_is_on = self._get_device_status()
-        
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
         if self._was_available and is_available:
@@ -101,7 +99,6 @@ class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
     async def _sync_hardware(self):
         if not self.coordinator.last_update_success: return
         device_is_on = self._get_device_status()
-        
         if self._is_on_local and not device_is_on:
             await self.async_turn_on_device()
         elif not self._is_on_local and device_is_on:
@@ -140,10 +137,12 @@ class MertikEcoSwitch(MertikBaseSwitch):
     def _get_device_status(self): return self._dataservice.mertik.mode == "2"
 
     async def async_turn_on_device(self): 
-        # FIX: BLOCKER - Do not allow Eco if Thermostat is running
-        if self._dataservice.is_thermostat_active:
+        # FIX: Robust check for active thermostat
+        is_locked = getattr(self._dataservice, "is_thermostat_active", False)
+        
+        if is_locked:
              _LOGGER.warning("BLOCKED: Cannot enable Eco Mode while Virtual Thermostat is active.")
-             self._is_on_local = False # Revert state
+             self._is_on_local = False # Reset switch
              self.async_write_ha_state()
              return
 
@@ -157,7 +156,6 @@ class MertikAuxSwitch(MertikBaseSwitch):
         super().__init__(dataservice, entry_id, name, "Secondary Burner")
         self._attr_icon = "mdi:fire"
     def _get_device_status(self): return self._dataservice.is_aux_on
-    # FIX: Point to .mertik driver
     async def async_turn_on_device(self): await self._dataservice.mertik.async_aux_on()
     async def async_turn_off_device(self): await self._dataservice.mertik.async_aux_off()
 
