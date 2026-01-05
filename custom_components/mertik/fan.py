@@ -1,5 +1,6 @@
 import logging
 import math
+import asyncio # <--- REQUIRED for the delay
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -18,7 +19,7 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         self._attr_name = name + " Fan"
         self._attr_unique_id = entry_id + "-fan"
         
-        # 1 = Set Speed/Percentage feature (Universal ID)
+        # 1 = Set Speed/Percentage feature
         self._attr_supported_features = (
             FanEntityFeature.TURN_ON 
             | FanEntityFeature.TURN_OFF 
@@ -54,7 +55,7 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
         if self._was_available and is_available:
-            # Optimistic Logic: If we are ON, ignore the 'Off' from cold sensor
+            # Optimistic Logic: Trust local "On" even if device reports "Off" (Cold Sensor)
             if self._is_on_local and not device_is_on:
                  pass 
             else:
@@ -136,17 +137,16 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
             _LOGGER.debug(f"Setting Fan to Level {level} ({self._percentage_local}%)")
             
             if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
-                # STRATEGY: THE "BLINK" REBOOT
-                # This mirrors your manual behavior: Toggle Off -> Set -> Toggle On.
-                # This guarantees the 'Actuation' command is sent, producing the BEEP.
-                
-                # 1. Turn OFF
-                await self._dataservice.mertik.async_fan_off()
-                
-                # 2. Update Speed Register
+                # 1. Update the Speed Register
                 await self._dataservice.mertik.async_set_fan_speed(int(level))
                 
-                # 3. Turn ON (BEEP!)
+                # 2. THE HUMAN BLINK (Force Actuation)
+                # We turn it off, wait for the receiver to process "OFF", then turn ON.
+                await self._dataservice.mertik.async_fan_off()
+                
+                # Wait 0.5s for RF transmission clearance
+                await asyncio.sleep(0.5)
+                
                 await self._dataservice.mertik.async_fan_on()
             else:
                 await self._dataservice.mertik.async_fan_on()
