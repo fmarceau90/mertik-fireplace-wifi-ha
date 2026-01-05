@@ -1,6 +1,6 @@
 import logging
 import math
-import asyncio # <--- REQUIRED for the delay
+import asyncio
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -19,7 +19,7 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         self._attr_name = name + " Fan"
         self._attr_unique_id = entry_id + "-fan"
         
-        # 1 = Set Speed/Percentage feature
+        # 1 = Set Speed/Percentage feature (Universal ID)
         self._attr_supported_features = (
             FanEntityFeature.TURN_ON 
             | FanEntityFeature.TURN_OFF 
@@ -55,7 +55,7 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
         if self._was_available and is_available:
-            # Optimistic Logic: Trust local "On" even if device reports "Off" (Cold Sensor)
+            # Optimistic Logic: Trust local state over cold sensor
             if self._is_on_local and not device_is_on:
                  pass 
             else:
@@ -134,19 +134,22 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
             else:
                 level = int(math.ceil(self._percentage_local / 25))
             
-            _LOGGER.debug(f"Setting Fan to Level {level} ({self._percentage_local}%)")
+            _LOGGER.info(f"Setting Fan to Level {level} (Seq: OFF -> WAIT -> SET -> ON)")
             
             if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
-                # 1. Update the Speed Register
-                await self._dataservice.mertik.async_set_fan_speed(int(level))
-                
-                # 2. THE HUMAN BLINK (Force Actuation)
-                # We turn it off, wait for the receiver to process "OFF", then turn ON.
+                # 1. Turn OFF first (Reset the receiver state)
                 await self._dataservice.mertik.async_fan_off()
                 
-                # Wait 0.5s for RF transmission clearance
-                await asyncio.sleep(0.5)
+                # 2. WAIT A FULL SECOND
+                # This guarantees the receiver has finished processing the "Off" packet.
+                await asyncio.sleep(1.0)
+
+                # 3. Update the Speed Register
+                # We do this while off so it's ready for the next command
+                await self._dataservice.mertik.async_set_fan_speed(int(level))
                 
+                # 4. Turn ON (BEEP!)
+                # Since it was definitely Off 1 second ago, this MUST trigger the Beep.
                 await self._dataservice.mertik.async_fan_on()
             else:
                 await self._dataservice.mertik.async_fan_on()
