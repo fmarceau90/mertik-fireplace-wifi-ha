@@ -29,7 +29,6 @@ class MertikSmartSyncSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         self._attr_icon = "mdi:sync-alert"
         self._attr_entity_category = EntityCategory.CONFIG 
 
-    # FIX: This tells HA to group this entity under the Fireplace Device
     @property
     def device_info(self):
         return self._dataservice.device_info
@@ -85,8 +84,11 @@ class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
+        # 1. Manual Override
         if self._was_available and is_available:
             self._is_on_local = device_is_on
+
+        # 2. Recovery (Reboot)
         elif not self._was_available and is_available:
             if smart_sync:
                 _LOGGER.warning(f"{self.name} recovered. Enforcing HA State: {self._is_on_local}")
@@ -140,16 +142,18 @@ class MertikEcoSwitch(MertikBaseSwitch):
         super().__init__(dataservice, entry_id, name, "Eco Mode")
         self._attr_icon = "mdi:leaf"
     def _get_device_status(self): return self._dataservice.mertik.mode == "2"
-    async def async_turn_on_device(self): await self._dataservice.async_set_eco()
-    async def async_turn_off_device(self): await self._dataservice.async_set_manual()
+    # FIX: Direct access to driver (mertik) instead of missing coordinator method
+    async def async_turn_on_device(self): await self._dataservice.mertik.async_set_eco()
+    async def async_turn_off_device(self): await self._dataservice.mertik.async_set_manual()
 
 class MertikAuxSwitch(MertikBaseSwitch):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice, entry_id, name, "Secondary Burner")
         self._attr_icon = "mdi:fire"
     def _get_device_status(self): return self._dataservice.is_aux_on
-    async def async_turn_on_device(self): await self._dataservice.async_aux_on()
-    async def async_turn_off_device(self): await self._dataservice.async_aux_off()
+    # FIX: Direct access to driver (mertik) to be safe
+    async def async_turn_on_device(self): await self._dataservice.mertik.async_aux_on()
+    async def async_turn_off_device(self): await self._dataservice.mertik.async_aux_off()
 
 class MertikPilotSwitch(MertikBaseSwitch):
     def __init__(self, dataservice, entry_id, name):

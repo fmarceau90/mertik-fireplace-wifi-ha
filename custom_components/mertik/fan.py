@@ -21,7 +21,8 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         self._is_on_local = False
 
     @property
-    def device_info(self): return self._dataservice.device_info
+    def device_info(self):
+        return self._dataservice.device_info
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
@@ -54,15 +55,18 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
     async def _sync_hardware(self):
         if not self.coordinator.last_update_success: return
         device_is_on = self._dataservice.mertik._fan_on
+        
         if self._is_on_local and not device_is_on:
             await self._dataservice.async_fan_on()
         elif not self._is_on_local and device_is_on:
             await self._dataservice.async_fan_off()
 
     @property
-    def is_on(self): return self._is_on_local
+    def is_on(self):
+        return self._is_on_local
 
-    async def async_turn_on(self, **kwargs):
+    # FIX: Updated signature to accept positional arguments from HA
+    async def async_turn_on(self, percentage=None, preset_mode=None, **kwargs):
         self._is_on_local = True
         await self._dataservice.async_fan_on()
         self.async_write_ha_state()
