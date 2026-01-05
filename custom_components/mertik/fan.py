@@ -18,7 +18,7 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         self._attr_name = name + " Fan"
         self._attr_unique_id = entry_id + "-fan"
         
-        # 1 = Set Speed/Percentage feature (Universal ID to prevent crashes)
+        # 1 = Set Speed/Percentage feature (Universal ID)
         self._attr_supported_features = (
             FanEntityFeature.TURN_ON 
             | FanEntityFeature.TURN_OFF 
@@ -128,19 +128,23 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
 
     async def _set_fan_hardware(self):
         try:
+            # FIX 1: Robust Math (1-100% -> Level 1-4)
             if self._percentage_local == 0:
                 level = 0
             else:
-                # FIX: Simple Math. 1-100 map to 1-4.
-                # 1-25 -> 1, 26-50 -> 2, 51-75 -> 3, 76-100 -> 4
                 level = int(math.ceil(self._percentage_local / 25))
             
             _LOGGER.debug(f"Setting Fan to Level {level} ({self._percentage_local}%)")
             
+            # FIX 2: THE DOUBLE TAP (Speed + Actuate)
             if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
-                # Ensure we pass an INT, not a float or string
-                await self._dataservice.mertik.async_set_fan_speed(int(level))
+                # 1. Set the register (Might be silent)
+                await self._dataservice.mertik.async_set_fan_speed(level)
+                
+                # 2. Force Actuation (Guarantees BEEP)
+                await self._dataservice.mertik.async_fan_on()
             else:
+                # Fallback for old drivers
                 await self._dataservice.mertik.async_fan_on()
                 
         except Exception as e:
