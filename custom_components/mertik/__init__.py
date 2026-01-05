@@ -23,12 +23,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.entry_id, 
         entry.data["name"]
     )
+    
+    # --- NEW: Initialize the Smart Sync Flag (Default to True) ---
+    coordinator.smart_sync_enabled = True
 
     await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    
+    # Register the developer service
+    async def handle_send_command(call):
+        cmd = call.data.get("command")
+        coord = hass.data[DOMAIN][entry.entry_id]
+        _LOGGER.info(f"Service called: Sending raw command '{cmd}'")
+        await coord.mertik._async_send_command(cmd)
+
+    hass.services.async_register(DOMAIN, "send_command", handle_send_command)
 
     return True
 
