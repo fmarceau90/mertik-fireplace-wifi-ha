@@ -97,14 +97,13 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
         if ATTR_TEMPERATURE in kwargs:
             self._target_temp = kwargs[ATTR_TEMPERATURE]
             
-            if self._attr_hvac_mode == HVACMode.OFF:
-                # Use dynamic deadzone for auto-start logic too
-                hysteresis = self._dataservice.thermostat_deadzone
-                if self._target_temp > (self.current_temperature + hysteresis):
-                    self._attr_hvac_mode = HVACMode.HEAT
-                    self._update_lock_status()
-
-            await self._control_heating()
+            # FIX: REMOVED AUTO-WAKE LOGIC
+            # If the mode is OFF, we update the target variable but do NOT switch 
+            # self._attr_hvac_mode to HEAT. We also do NOT call _control_heating().
+            
+            if self._attr_hvac_mode == HVACMode.HEAT:
+                await self._control_heating()
+            
             self.async_write_ha_state()
 
     def _handle_coordinator_update(self) -> None:
