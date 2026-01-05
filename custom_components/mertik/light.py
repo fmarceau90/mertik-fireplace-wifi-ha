@@ -19,20 +19,26 @@ class MertikLight(CoordinatorEntity, LightEntity, RestoreEntity):
         self._attr_icon = "mdi:lightbulb"
         self._attr_supported_color_modes = {ColorMode.BRIGHTNESS}
         self._attr_color_mode = ColorMode.BRIGHTNESS
+        
         self._was_available = False
         self._is_on_local = False
-        self._brightness_local = 255
+        self._brightness_local = 255  # Default to max brightness
 
     @property
-    def device_info(self): return self._dataservice.device_info
+    def device_info(self):
+        return self._dataservice.device_info
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
         if last_state:
             self._is_on_local = (last_state.state == "on")
+            # FIX 1: Check for valid brightness in restore
             if "brightness" in last_state.attributes:
-                self._brightness_local = last_state.attributes["brightness"]
+                restored_b = last_state.attributes["brightness"]
+                if restored_b is not None:
+                    self._brightness_local = restored_b
+        
         self._was_available = self.coordinator.last_update_success
         self._handle_coordinator_update()
 
@@ -44,7 +50,9 @@ class MertikLight(CoordinatorEntity, LightEntity, RestoreEntity):
 
         if self._was_available and is_available:
             self._is_on_local = device_is_on
-            if device_is_on: self._brightness_local = device_brightness
+            # FIX 2: Only update local brightness if device reports a valid value (not None)
+            if device_is_on and device_brightness is not None:
+                self._brightness_local = device_brightness
         
         elif not self._was_available and is_available:
             if smart_sync:
@@ -52,7 +60,8 @@ class MertikLight(CoordinatorEntity, LightEntity, RestoreEntity):
             else:
                 _LOGGER.info(f"Light recovered. Smart Sync OFF. Accepting device state: {device_is_on}")
                 self._is_on_local = device_is_on
-                if device_is_on: self._brightness_local = device_brightness
+                if device_is_on and device_brightness is not None:
+                     self._brightness_local = device_brightness
 
         self._was_available = is_available
         self.async_write_ha_state()
@@ -63,19 +72,33 @@ class MertikLight(CoordinatorEntity, LightEntity, RestoreEntity):
     async def _sync_hardware(self):
         if not self.coordinator.last_update_success: return
         device_is_on = self._dataservice.is_light_on
+        
         if self._is_on_local and not device_is_on:
+            # FIX 3: Ensure we never send None to the hardware
+            if self._brightness_local is None:
+                self._brightness_local = 255
             await self._dataservice.async_set_light_brightness(self._brightness_local)
         elif not self._is_on_local and device_is_on:
             await self._dataservice.async_light_off()
 
     @property
-    def is_on(self): return self._is_on_local
+    def is_on(self):
+        return self._is_on_local
+
     @property
-    def brightness(self): return self._brightness_local
+    def brightness(self):
+        return self._brightness_local
 
     async def async_turn_on(self, **kwargs):
         self._is_on_local = True
-        if "brightness" in kwargs: self._brightness_local = kwargs["brightness"]
+        
+        if "brightness" in kwargs:
+            self._brightness_local = kwargs["brightness"]
+        
+        # FIX 4: Final safety net before sending command
+        if self._brightness_local is None:
+             self._brightness_local = 255
+
         await self._dataservice.async_set_light_brightness(self._brightness_local)
         self.async_write_ha_state()
 
