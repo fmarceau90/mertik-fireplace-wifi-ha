@@ -19,7 +19,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
         MertikSmartSyncSwitch(dataservice, entry.entry_id, dev_name),
     ])
 
-# --- CONFIGURATION SWITCH ---
 class MertikSmartSyncSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice)
@@ -49,7 +48,6 @@ class MertikSmartSyncSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         self._dataservice.smart_sync_enabled = False
         self.async_write_ha_state()
 
-# --- BASE SWITCH ---
 class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
     def __init__(self, dataservice, entry_id, name, switch_type):
         super().__init__(dataservice)
@@ -107,7 +105,6 @@ class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
     async def async_turn_on_device(self): pass
     async def async_turn_off_device(self): pass
 
-# --- IMPLEMENTATIONS ---
 class MertikPowerSwitch(MertikBaseSwitch):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice, entry_id, name, "Power")
@@ -121,10 +118,9 @@ class MertikEcoSwitch(MertikBaseSwitch):
         super().__init__(dataservice, entry_id, name, "Eco Mode")
         self._attr_icon = "mdi:leaf"
         
-    # FIX: Grey out this switch if Thermostat is active!
     @property
     def available(self) -> bool:
-        # It is available IF (Coordinator is OK) AND (Thermostat is NOT active)
+        # Check if Coordinator is healthy AND Thermostat is unlocked
         is_coord_ok = self.coordinator.last_update_success
         is_locked = getattr(self._dataservice, "is_thermostat_active", False)
         return is_coord_ok and not is_locked

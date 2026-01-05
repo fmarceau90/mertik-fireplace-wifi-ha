@@ -8,12 +8,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# Mertik fans usually have 4 speeds
 SPEED_LIST = ["1", "2", "3", "4"]
-
-# Universal Constant for Speed Control
-# We use 1 (raw integer) to avoid "AttributeError: SET_PERCENTAGE" crashes on different HA versions.
-SUPPORT_SET_PERCENTAGE = 1 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     dataservice = hass.data[DOMAIN].get(entry.entry_id)
@@ -26,16 +21,17 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         self._attr_name = name + " Fan"
         self._attr_unique_id = entry_id + "-fan"
         
-        # FIX: Use raw integer math for features to be crash-proof
+        # FIX: Using raw integer '1' for Set Percentage/Speed to avoid AttributeErrors
+        # 1 = Set Speed/Percentage
         self._attr_supported_features = (
             FanEntityFeature.TURN_ON 
             | FanEntityFeature.TURN_OFF 
-            | SUPPORT_SET_PERCENTAGE
+            | 1 
         )
         
         self._was_available = False
         self._is_on_local = False
-        self._percentage_local = 100  # Default to Max Speed
+        self._percentage_local = 100
 
     @property
     def device_info(self):
@@ -62,7 +58,6 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
         if self._was_available and is_available:
-            # Optimistic Logic: If we are ON, ignore the 'Off' from cold sensor
             if self._is_on_local and not device_is_on:
                  pass 
             else:
@@ -143,7 +138,6 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
             
             _LOGGER.debug(f"Setting Fan to Level {level} ({self._percentage_local}%)")
             
-            # Call driver safely
             if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
                 await self._dataservice.mertik.async_set_fan_speed(level)
             else:

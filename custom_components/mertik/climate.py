@@ -47,8 +47,14 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
         self._update_lock_status()
 
     def _update_lock_status(self):
+        """Update global lock status and force other entities to refresh."""
         is_active = (self._attr_hvac_mode == HVACMode.HEAT)
-        self._dataservice.is_thermostat_active = is_active
+        
+        # Only update and notify if state actually changed to prevent loops
+        if getattr(self._dataservice, "is_thermostat_active", None) != is_active:
+             self._dataservice.is_thermostat_active = is_active
+             # This tells Switch/Fan/Light to re-check their 'available' property
+             self.coordinator.async_update_listeners()
 
     @property
     def current_temperature(self): return self._dataservice.ambient_temperature
@@ -65,7 +71,8 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
 
     async def async_set_hvac_mode(self, hvac_mode):
         self._attr_hvac_mode = hvac_mode
-        self._update_lock_status()
+        self._update_lock_status() # <--- Triggers update for Eco Switch
+        
         if hvac_mode == HVACMode.OFF:
             if self._dataservice.keep_pilot_on:
                  if self._dataservice.get_flame_height() > 0:
@@ -86,11 +93,8 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
     def _handle_coordinator_update(self) -> None:
         is_available = self.coordinator.last_update_success
         is_on = self._dataservice.is_on
-        
-        # Check Config
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
-        # 1. Manual Sync
         if self._was_available and is_available:
             if self._was_on != is_on:
                 if is_on: 
@@ -100,14 +104,11 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
                     if self._attr_hvac_mode == HVACMode.HEAT:
                         self._attr_hvac_mode = HVACMode.OFF
         
-        # 2. Recovery Sync
         elif not self._was_available and is_available:
             if smart_sync:
-                _LOGGER.warning("Device recovered. Enforcing HA State (Smart Sync ON).")
-                # Do nothing -> Keeps HA state -> Control Loop enforces it
+                _LOGGER.warning("Device recovered. Enforcing HA State.")
             else:
-                _LOGGER.info("Device recovered. Accepting device state (Smart Sync OFF).")
-                # Update HA to match device
+                _LOGGER.info("Device recovered. Accepting device state.")
                 if is_on: self._attr_hvac_mode = HVACMode.HEAT
                 else: self._attr_hvac_mode = HVACMode.OFF
 
@@ -139,7 +140,6 @@ class MertikClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
                 if not self._dataservice.is_on:
                     await self._dataservice.async_ignite_fireplace()
                     return 
-                
                 raw_height = int(delta * 6)
                 target_height = max(1, min(12, raw_height))
                 current_height = self._dataservice.get_flame_height()
