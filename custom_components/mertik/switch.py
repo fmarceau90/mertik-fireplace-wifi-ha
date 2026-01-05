@@ -1,5 +1,5 @@
 import logging
-from homeassistant.components.switch import SwitchEntity, SwitchDeviceClass
+from homeassistant.components.switch import SwitchEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 from .const import DOMAIN
@@ -15,10 +15,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
         MertikEcoSwitch(dataservice, entry.entry_id, dev_name),
         MertikAuxSwitch(dataservice, entry.entry_id, dev_name),
         MertikPilotSwitch(dataservice, entry.entry_id, dev_name),
-        MertikSmartSyncSwitch(dataservice, entry.entry_id, dev_name), # <--- NEW
+        MertikSmartSyncSwitch(dataservice, entry.entry_id, dev_name),
     ])
 
-# --- NEW SWITCH FOR CONFIGURATION ---
+# --- CONFIGURATION SWITCH ---
 class MertikSmartSyncSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice)
@@ -26,22 +26,24 @@ class MertikSmartSyncSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         self._attr_name = name + " Smart Sync"
         self._attr_unique_id = entry_id + "-smart-sync"
         self._attr_icon = "mdi:sync-alert"
-        self._attr_entity_category = "config" # Shows in "Configuration" section
+        self._attr_entity_category = "config" 
 
     async def async_added_to_hass(self):
         """Restore previous setting."""
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
+        
         if last_state and last_state.state in ["on", "off"]:
-            # Restore the flag on the coordinator
+            # Restore state
             self._dataservice.smart_sync_enabled = (last_state.state == "on")
         else:
-            # Default to True if new
+            # Default to True
             self._dataservice.smart_sync_enabled = True
 
     @property
     def is_on(self):
-        return self._dataservice.smart_sync_enabled
+        # FIX: Safe access. Defaults to True if variable is missing.
+        return getattr(self._dataservice, "smart_sync_enabled", True)
 
     async def async_turn_on(self, **kwargs):
         self._dataservice.smart_sync_enabled = True
@@ -51,7 +53,7 @@ class MertikSmartSyncSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         self._dataservice.smart_sync_enabled = False
         self.async_write_ha_state()
 
-# --- UPDATED BASE CLASS ---
+# --- BASE SWITCH ---
 class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
     """Base class for Mertik switches with State Restoration."""
     def __init__(self, dataservice, entry_id, name, switch_type):
@@ -78,21 +80,20 @@ class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         is_available = self.coordinator.last_update_success
         device_is_on = self._get_device_status()
         
-        # Check the Global Sync Flag
+        # FIX: Safe access to the flag
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
-        # 1. Manual Override
+        # 1. Manual Override (User pressed remote)
         if self._was_available and is_available:
             self._is_on_local = device_is_on
 
         # 2. Recovery (Reboot)
         elif not self._was_available and is_available:
             if smart_sync:
-                # Enforce HA State
                 _LOGGER.warning(f"{self.name} recovered. Enforcing HA State: {self._is_on_local}")
+                # We do NOT update local state; we keep HA's memory
             else:
-                # Accept Device State
-                _LOGGER.info(f"{self.name} recovered. Smart Sync OFF. Accepting device state.")
+                _LOGGER.info(f"{self.name} recovered. Accepting device state: {device_is_on}")
                 self._is_on_local = device_is_on
 
         self._was_available = is_available
@@ -104,6 +105,7 @@ class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
     async def _sync_hardware(self):
         if not self.coordinator.last_update_success: return
         device_is_on = self._get_device_status()
+        
         if self._is_on_local and not device_is_on:
             await self.async_turn_on_device()
         elif not self._is_on_local and device_is_on:
