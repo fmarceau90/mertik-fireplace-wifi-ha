@@ -56,22 +56,24 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         if not self.coordinator.last_update_success: return
         device_is_on = self._dataservice.mertik._fan_on
         
+        # FIX: Point to .mertik driver
         if self._is_on_local and not device_is_on:
-            await self._dataservice.async_fan_on()
+            await self._dataservice.mertik.async_fan_on()
         elif not self._is_on_local and device_is_on:
-            await self._dataservice.async_fan_off()
+            await self._dataservice.mertik.async_fan_off()
 
     @property
     def is_on(self):
         return self._is_on_local
 
-    # FIX: Updated signature to accept positional arguments from HA
     async def async_turn_on(self, percentage=None, preset_mode=None, **kwargs):
         self._is_on_local = True
-        await self._dataservice.async_fan_on()
+        # FIX: Point to .mertik driver
+        await self._dataservice.mertik.async_fan_on()
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs):
         self._is_on_local = False
-        await self._dataservice.async_fan_off()
+        # FIX: Point to .mertik driver
+        await self._dataservice.mertik.async_fan_off()
         self.async_write_ha_state()

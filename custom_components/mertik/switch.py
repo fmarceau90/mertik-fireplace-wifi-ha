@@ -34,7 +34,6 @@ class MertikSmartSyncSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         return self._dataservice.device_info
 
     async def async_added_to_hass(self):
-        """Restore previous setting."""
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
         
@@ -84,11 +83,8 @@ class MertikBaseSwitch(CoordinatorEntity, SwitchEntity, RestoreEntity):
         
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
-        # 1. Manual Override
         if self._was_available and is_available:
             self._is_on_local = device_is_on
-
-        # 2. Recovery (Reboot)
         elif not self._was_available and is_available:
             if smart_sync:
                 _LOGGER.warning(f"{self.name} recovered. Enforcing HA State: {self._is_on_local}")
@@ -142,16 +138,26 @@ class MertikEcoSwitch(MertikBaseSwitch):
         super().__init__(dataservice, entry_id, name, "Eco Mode")
         self._attr_icon = "mdi:leaf"
     def _get_device_status(self): return self._dataservice.mertik.mode == "2"
-    # FIX: Direct access to driver (mertik) instead of missing coordinator method
-    async def async_turn_on_device(self): await self._dataservice.mertik.async_set_eco()
-    async def async_turn_off_device(self): await self._dataservice.mertik.async_set_manual()
+
+    async def async_turn_on_device(self): 
+        # FIX: BLOCKER - Do not allow Eco if Thermostat is running
+        if self._dataservice.is_thermostat_active:
+             _LOGGER.warning("BLOCKED: Cannot enable Eco Mode while Virtual Thermostat is active.")
+             self._is_on_local = False # Revert state
+             self.async_write_ha_state()
+             return
+
+        await self._dataservice.mertik.async_set_eco()
+
+    async def async_turn_off_device(self): 
+        await self._dataservice.mertik.async_set_manual()
 
 class MertikAuxSwitch(MertikBaseSwitch):
     def __init__(self, dataservice, entry_id, name):
         super().__init__(dataservice, entry_id, name, "Secondary Burner")
         self._attr_icon = "mdi:fire"
     def _get_device_status(self): return self._dataservice.is_aux_on
-    # FIX: Direct access to driver (mertik) to be safe
+    # FIX: Point to .mertik driver
     async def async_turn_on_device(self): await self._dataservice.mertik.async_aux_on()
     async def async_turn_off_device(self): await self._dataservice.mertik.async_aux_off()
 
