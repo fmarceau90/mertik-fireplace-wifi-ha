@@ -3,13 +3,9 @@ import math
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.util.percentage import ordered_list_item_to_percentage, percentage_to_ordered_list_item
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
-
-# Define speeds as strings for the helper utility
-SPEED_LIST = ["1", "2", "3", "4"]
 
 async def async_setup_entry(hass, entry, async_add_entities):
     dataservice = hass.data[DOMAIN].get(entry.entry_id)
@@ -22,7 +18,7 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         self._attr_name = name + " Fan"
         self._attr_unique_id = entry_id + "-fan"
         
-        # 1 = Set Speed/Percentage feature
+        # 1 = Set Speed/Percentage feature (Universal ID to prevent crashes)
         self._attr_supported_features = (
             FanEntityFeature.TURN_ON 
             | FanEntityFeature.TURN_OFF 
@@ -58,6 +54,7 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         smart_sync = getattr(self._dataservice, "smart_sync_enabled", True)
 
         if self._was_available and is_available:
+            # Optimistic Logic: If we are ON, ignore the 'Off' from cold sensor
             if self._is_on_local and not device_is_on:
                  pass 
             else:
@@ -98,7 +95,7 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
 
     @property
     def speed_count(self) -> int:
-        return len(SPEED_LIST)
+        return 4
 
     async def async_turn_on(self, percentage=None, preset_mode=None, **kwargs):
         self._is_on_local = True
@@ -134,14 +131,15 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
             if self._percentage_local == 0:
                 level = 0
             else:
-                # FIX: Convert the string result ("4") to an int (4) before use
-                str_level = percentage_to_ordered_list_item(SPEED_LIST, self._percentage_local)
-                level = int(str_level)
+                # FIX: Simple Math. 1-100 map to 1-4.
+                # 1-25 -> 1, 26-50 -> 2, 51-75 -> 3, 76-100 -> 4
+                level = int(math.ceil(self._percentage_local / 25))
             
             _LOGGER.debug(f"Setting Fan to Level {level} ({self._percentage_local}%)")
             
             if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
-                await self._dataservice.mertik.async_set_fan_speed(level)
+                # Ensure we pass an INT, not a float or string
+                await self._dataservice.mertik.async_set_fan_speed(int(level))
             else:
                 await self._dataservice.mertik.async_fan_on()
                 
