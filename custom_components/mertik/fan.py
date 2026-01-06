@@ -1,5 +1,6 @@
 import logging
 import math
+import asyncio
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -28,8 +29,7 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         self._percentage_local = 100
 
     @property
-    def device_info(self):
-        return self._dataservice.device_info
+    def device_info(self): return self._dataservice.device_info
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
@@ -105,12 +105,18 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
             else:
                 level = int(math.ceil(self._percentage_local / 25))
             
-            _LOGGER.debug(f"Setting Fan to Level {level} (calling async_set_fan_speed)")
+            _LOGGER.debug(f"Setting Fan to Level {level}. Sequence: Set Speed -> Turn On.")
 
-            # NOW THIS METHOD ACTUALLY EXISTS IN THE DRIVER!
+            # Check if we have the new driver capability
             if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
+                # 1. SET THE CONFIGURATION (Silent)
                 await self._dataservice.mertik.async_set_fan_speed(int(level))
+                
+                # 2. ACTUATE THE FAN (Beep!)
+                # We need to send the 'ON' command to apply the new speed setting.
+                await self._dataservice.mertik.async_fan_on()
             else:
+                # Fallback for old drivers
                 await self._dataservice.mertik.async_fan_on()
                 
         except Exception as e:
