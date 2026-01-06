@@ -1,5 +1,6 @@
 import logging
 import math
+import asyncio
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -99,25 +100,27 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
 
     async def _set_fan_hardware(self):
         try:
-            if self._percentage_local == 0: level = 0
-            else: level = int(math.ceil(self._percentage_local / 25))
+            # FIX: We were calculating 1-4, but driver likely wants 0-100.
+            # If we sent '4', it saw 4% (which is basically Off).
+            # Now we send the raw percentage (25, 50, 75, 100).
+            if self._percentage_local == 0: 
+                level = 0
+            else:
+                level = int(self._percentage_local)
             
-            _LOGGER.debug(f"Setting Fan to Level {level}. Forcing transmission.")
-            
-            if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
-                
-                # --- THE MEMORY TRICK ---
-                # We force the driver to forget its current speed.
-                # This ensures the next command is seen as a "Change" and transmitted via RF.
-                if hasattr(self._dataservice.mertik, "_fan_speed"):
-                     self._dataservice.mertik._fan_speed = -1
-                
-                # Send the Speed Command (This triggers the Single Beep)
-                await self._dataservice.mertik.async_set_fan_speed(int(level))
-                
-                # Update status manually since we messed with the memory
-                self._dataservice.mertik._fan_on = True
+            _LOGGER.info(f"Setting Fan to {level}% (Raw Percentage)")
 
+            if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
+                # Memory Trick: Ensure driver thinks speed is different so it transmits
+                if hasattr(self._dataservice.mertik, "_fan_speed"):
+                    self._dataservice.mertik._fan_speed = -1
+                    
+                # SEND RAW PERCENTAGE (e.g., 100 instead of 4)
+                await self._dataservice.mertik.async_set_fan_speed(level)
+                
+                # Force On just in case
+                self._dataservice.mertik._fan_on = False
+                await self._dataservice.mertik.async_fan_on()
             else:
                 await self._dataservice.mertik.async_fan_on()
                 
