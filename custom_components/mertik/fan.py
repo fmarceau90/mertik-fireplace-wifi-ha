@@ -100,28 +100,45 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
 
     async def _set_fan_hardware(self):
         try:
-            # FIX: We were calculating 1-4, but driver likely wants 0-100.
-            # If we sent '4', it saw 4% (which is basically Off).
-            # Now we send the raw percentage (25, 50, 75, 100).
+            # Calculate Level 1-4
             if self._percentage_local == 0: 
                 level = 0
             else:
-                level = int(self._percentage_local)
+                level = int(math.ceil(self._percentage_local / 25))
             
-            _LOGGER.info(f"Setting Fan to {level}% (Raw Percentage)")
+            _LOGGER.info(f"Setting Fan to Level {level}. Initiating 'Kitchen Sink' protocol.")
+
+            # DEBUG: Print attributes to log so we can see the real variable names
+            try:
+                attrs = dir(self._dataservice.mertik)
+                filtered = [a for a in attrs if "fan" in a or "speed" in a]
+                _LOGGER.debug(f"[DEBUG INSPECTION] Driver Attributes: {filtered}")
+            except:
+                pass
 
             if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
-                # Memory Trick: Ensure driver thinks speed is different so it transmits
-                if hasattr(self._dataservice.mertik, "_fan_speed"):
-                    self._dataservice.mertik._fan_speed = -1
-                    
-                # SEND RAW PERCENTAGE (e.g., 100 instead of 4)
-                await self._dataservice.mertik.async_set_fan_speed(level)
                 
-                # Force On just in case
+                # METHOD 1: VARIABLE INJECTION (Bypass the function)
+                # We try to set every common variable name directly
+                for var_name in ["_fan_speed", "fan_speed", "_speed", "speed"]:
+                    if hasattr(self._dataservice.mertik, var_name):
+                        setattr(self._dataservice.mertik, var_name, int(level))
+                        _LOGGER.debug(f"Injected {level} into {var_name}")
+
+                # METHOD 2: THE "RISING EDGE" (0 -> Level)
+                # Some drivers ignore commands if value == current_value.
+                # We force it to 0 first, then to Target.
+                await self._dataservice.mertik.async_set_fan_speed(0)
+                await asyncio.sleep(0.2) # Tiny pause
+                await self._dataservice.mertik.async_set_fan_speed(int(level))
+                
+                # METHOD 3: FORCE ACTUATION
+                # Reset 'On' state so it is forced to send the packet
                 self._dataservice.mertik._fan_on = False
                 await self._dataservice.mertik.async_fan_on()
+                
             else:
+                # Fallback
                 await self._dataservice.mertik.async_fan_on()
                 
         except Exception as e:
