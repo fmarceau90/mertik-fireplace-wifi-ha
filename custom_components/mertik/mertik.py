@@ -49,6 +49,7 @@ class Mertik:
         
         # New Feature States
         self._fan_on = False
+        self._fan_speed = None  # Track speed locally
         self._low_battery = False
         self._rf_signal_level = 0
         
@@ -146,6 +147,32 @@ class Mertik:
     async def async_set_manual(self):
         await self._async_send_command(CMD_MANUAL_MODE)
 
+    # --- NEW METHOD: SET FAN SPEED ---
+    async def async_set_fan_speed(self, level: int) -> None:
+        """Set fan speed (1-4). Uses codes 31-34."""
+        # Ensure level is valid 1-4
+        if level <= 0:
+            await self.async_fan_off()
+            return
+        level = max(1, min(4, level))
+        
+        # Map levels to Mertik Hex Codes (Similar to Light '36' pattern)
+        # Level 1 = "31"
+        # Level 2 = "32"
+        # Level 3 = "33"
+        # Level 4 = "34"
+        code_int = 30 + level
+        
+        # Format as double byte string (e.g., "3434")
+        device_code = f"{code_int:02d}{code_int:02d}"
+        
+        # Construct message: PREFIX + CODE + SUFFIX
+        # We reuse CMD_LIGHT_SET_PREFIX as it is likely a generic "SET" command (0x03)
+        msg = f"{CMD_LIGHT_SET_PREFIX}{device_code}{CMD_LIGHT_SET_SUFFIX}"
+        
+        _LOGGER.debug(f"Sending Fan Speed Command: Level {level} -> Msg {msg}")
+        await self._async_send_command(msg)
+
     async def async_set_light_brightness(self, brightness) -> None:
         normalized_brightness = (brightness - 1) / 254 * 100
         if normalized_brightness == 100:
@@ -224,7 +251,6 @@ class Mertik:
                 self.on = False 
             else:
                 # FIX: Clamp to 12. 
-                # Mathematical edge case: round(12.9) -> 13, which is invalid.
                 calc_height = round(((flameHeightRaw - 128) / 128) * 12) + 1
                 self.flameHeight = min(12, calc_height)
                 self.on = True
@@ -242,7 +268,7 @@ class Mertik:
             
             # --- NEW SENSORS PARSING ---
             self._low_battery = self._from_bit_status(statusBits, 9) 
-            self._fan_on = self._from_bit_status(statusBits, 14)      
+            self._fan_on = self._from_bit_status(statusBits, 14)       
             
             try:
                 self._rf_signal_level = int("0x" + statusStr[12:14], 0)
@@ -263,9 +289,9 @@ class Mertik:
             
             if self._ambient_temperature == 0.0:
                  if 0.0 < raw_temp < 60.0:
-                     _LOGGER.info(f"System initialized with temperature: {raw_temp}")
-                     self._ambient_temperature = raw_temp
-                     return
+                      _LOGGER.info(f"System initialized with temperature: {raw_temp}")
+                      self._ambient_temperature = raw_temp
+                      return
 
             # Glitch Filter
             if 1.0 < raw_temp < 50.0:
