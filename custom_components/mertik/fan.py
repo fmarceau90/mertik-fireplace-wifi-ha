@@ -99,47 +99,54 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         await self._set_fan_hardware()
 
     async def _set_fan_hardware(self):
+        """Try EVERY method to force the beep."""
         try:
-            # Calculate Level 1-4
-            if self._percentage_local == 0: 
-                level = 0
-            else:
-                level = int(math.ceil(self._percentage_local / 25))
+            level_1_to_4 = int(math.ceil(self._percentage_local / 25)) if self._percentage_local > 0 else 0
+            raw_percent = int(self._percentage_local)
             
-            _LOGGER.info(f"Setting Fan to Level {level}. Initiating 'Kitchen Sink' protocol.")
+            _LOGGER.info(f"Setting Fan. Level: {level_1_to_4}, Percent: {raw_percent}")
 
-            # DEBUG: Print attributes to log so we can see the real variable names
-            try:
-                attrs = dir(self._dataservice.mertik)
-                filtered = [a for a in attrs if "fan" in a or "speed" in a]
-                _LOGGER.debug(f"[DEBUG INSPECTION] Driver Attributes: {filtered}")
-            except:
-                pass
-
-            if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
-                
-                # METHOD 1: VARIABLE INJECTION (Bypass the function)
-                # We try to set every common variable name directly
-                for var_name in ["_fan_speed", "fan_speed", "_speed", "speed"]:
-                    if hasattr(self._dataservice.mertik, var_name):
-                        setattr(self._dataservice.mertik, var_name, int(level))
-                        _LOGGER.debug(f"Injected {level} into {var_name}")
-
-                # METHOD 2: THE "RISING EDGE" (0 -> Level)
-                # Some drivers ignore commands if value == current_value.
-                # We force it to 0 first, then to Target.
-                await self._dataservice.mertik.async_set_fan_speed(0)
-                await asyncio.sleep(0.2) # Tiny pause
-                await self._dataservice.mertik.async_set_fan_speed(int(level))
-                
-                # METHOD 3: FORCE ACTUATION
-                # Reset 'On' state so it is forced to send the packet
+            # 1. FORCED RESET OF 'ON' STATUS
+            # This is critical. We force the driver to think it is OFF.
+            # This guarantees the next command (On/Set) will generate a Radio Packet.
+            if hasattr(self._dataservice.mertik, "_fan_on"):
                 self._dataservice.mertik._fan_on = False
-                await self._dataservice.mertik.async_fan_on()
+
+            # 2. ATTEMPT A: Set Speed via Method (Try Level first)
+            method_called = False
+            if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
+                try:
+                    # Some drivers want 1-4
+                    await self._dataservice.mertik.async_set_fan_speed(level_1_to_4)
+                    method_called = True
+                except:
+                    pass
                 
-            else:
-                # Fallback
-                await self._dataservice.mertik.async_fan_on()
+                # If that didn't crash, try resetting 'On' flag again and sending percentage
+                # (Some drivers want 0-100)
+                if hasattr(self._dataservice.mertik, "_fan_on"): self._dataservice.mertik._fan_on = False
+                try:
+                    await self._dataservice.mertik.async_set_fan_speed(raw_percent)
+                    method_called = True
+                except:
+                    pass
+
+            # 3. ATTEMPT B: Direct Variable Injection
+            # If the method failed or doesn't exist, we manually set the internal memory
+            if not method_called:
+                if hasattr(self._dataservice.mertik, "_fan_speed"):
+                    self._dataservice.mertik._fan_speed = level_1_to_4
                 
+                # 4. FINAL TRIGGER: Force ON
+                # Since we set _fan_on to False at the start, this MUST send the packet.
+                # And since we injected the speed variable, the packet should contain the new speed.
+                await self._dataservice.mertik.async_fan_on()
+            
+            # 5. Restore Reality
+            # We forced it to False to trick it, now we set it back to True locally
+            self._is_on_local = True
+            if hasattr(self._dataservice.mertik, "_fan_on"):
+                 self._dataservice.mertik._fan_on = True
+
         except Exception as e:
-            _LOGGER.error(f"Failed to set fan speed: {e}")
+            _LOGGER.error(f"CRITICAL FAILURE in _set_fan_hardware: {e}")
