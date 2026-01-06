@@ -1,6 +1,5 @@
 import logging
 import math
-import asyncio
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -18,7 +17,7 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
         self._dataservice = dataservice
         self._attr_name = name + " Fan"
         self._attr_unique_id = entry_id + "-fan"
-        # 1 = Set Speed/Percentage feature (Universal ID)
+        # 1 = Set Speed/Percentage feature
         self._attr_supported_features = (
             FanEntityFeature.TURN_ON 
             | FanEntityFeature.TURN_OFF 
@@ -103,28 +102,22 @@ class MertikFan(CoordinatorEntity, FanEntity, RestoreEntity):
             if self._percentage_local == 0: level = 0
             else: level = int(math.ceil(self._percentage_local / 25))
             
-            _LOGGER.info(f"Setting Fan to Level {level}. FORCING COMMANDS.")
+            _LOGGER.debug(f"Setting Fan to Level {level}. Forcing transmission.")
             
             if hasattr(self._dataservice.mertik, "async_set_fan_speed"):
                 
-                # --- STEP 1: FORCE TURN OFF ---
-                # We lie to the driver: "You are ON".
-                self._dataservice.mertik._fan_on = True 
-                # Now we say "Turn OFF". Driver thinks it's a valid change -> Sends Signal -> BEEP 1
-                await self._dataservice.mertik.async_fan_off()
+                # --- THE MEMORY TRICK ---
+                # We force the driver to forget its current speed.
+                # This ensures the next command is seen as a "Change" and transmitted via RF.
+                if hasattr(self._dataservice.mertik, "_fan_speed"):
+                     self._dataservice.mertik._fan_speed = -1
                 
-                # Wait for Receiver to Reset
-                await asyncio.sleep(1.0)
-
-                # --- STEP 2: SET SPEED ---
+                # Send the Speed Command (This triggers the Single Beep)
                 await self._dataservice.mertik.async_set_fan_speed(int(level))
                 
-                # --- STEP 3: FORCE TURN ON ---
-                # We lie to the driver: "You are OFF".
-                self._dataservice.mertik._fan_on = False
-                # Now we say "Turn ON". Driver thinks it's a valid change -> Sends Signal -> BEEP 2
-                await self._dataservice.mertik.async_fan_on()
-                
+                # Update status manually since we messed with the memory
+                self._dataservice.mertik._fan_on = True
+
             else:
                 await self._dataservice.mertik.async_fan_on()
                 
